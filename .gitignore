@@ -1,0 +1,18 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.local
+.env.*.local
+apps/api/prisma/dev.db
+apps/api/prisma/dev.db-journal
+*.log
+
+# Tools (portable Node/Git)
+.tools/
+
+# Seed and temp build scripts
+apps/api/seed.cjs
+apps/web/build-output.log
+apps/web/build.cjs
+
