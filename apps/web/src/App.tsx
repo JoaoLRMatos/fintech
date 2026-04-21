@@ -10,6 +10,9 @@ import { CategoriesPage } from './pages/CategoriesPage';
 import { AccountsPage } from './pages/AccountsPage';
 import { RecurringPage } from './pages/RecurringPage';
 import { WhatsAppPage } from './pages/WhatsAppPage';
+import { CreditCardsPage } from './pages/CreditCardsPage';
+import { ReportsPage } from './pages/ReportsPage';
+import { ImportPage } from './pages/ImportPage';
 
 function GuestRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -29,9 +32,12 @@ export default function App() {
           <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/transactions" element={<TransactionsPage />} />
+            <Route path="/import" element={<ImportPage />} />
             <Route path="/categories" element={<CategoriesPage />} />
             <Route path="/accounts" element={<AccountsPage />} />
+            <Route path="/credit-cards" element={<CreditCardsPage />} />
             <Route path="/recurring" element={<RecurringPage />} />
+            <Route path="/reports" element={<ReportsPage />} />
             <Route path="/whatsapp" element={<WhatsAppPage />} />
           </Route>
 

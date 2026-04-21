@@ -19,6 +19,7 @@ export interface ProcessedMessage {
   category: string;
   installments: number | null;
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY' | null;
+  paymentMethod: 'debit' | 'credit' | null;
   categoryFilter: string | null;
   period: string | null;
   aiResponse: string | null;
@@ -42,6 +43,7 @@ Analise a mensagem do usuário e retorne APENAS um JSON (sem markdown, sem texto
   "category": "nome da categoria mais adequada das disponíveis",
   "installments": number | null,
   "frequency": "MONTHLY" | "WEEKLY" | "DAILY" | "YEARLY" | null,
+  "paymentMethod": "credit" | "debit" | null,
   "categoryFilter": "nome da categoria filtrada" | null,
   "period": "month" | "week" | "year" | null,
   "aiResponse": null
@@ -72,6 +74,12 @@ REGRAS DE CLASSIFICAÇÃO DE INTENT:
    Exemplos: "o que você faz?", "ajuda", "como funciona?", "comandos"
 
 8. **unknown**: Não se encaixa em nenhum intent acima. Mensagens irrelevantes.
+
+REGRAS DE MEIO DE PAGAMENTO (paymentMethod):
+- "crédito", "no crédito", "no cartão", "cartão de crédito" → paymentMethod = "credit"
+- "débito", "no débito", "no cheque" → paymentMethod = "debit"
+- Se não mencionado → paymentMethod = null
+- Exemplos: "230 barbeiro crédito" → credit | "50 gasolina débito" → debit | "80 ifood" → null
 
 REGRAS DE CATEGORIZAÇÃO:
 - Gasolina, combustível, uber, 99, ônibus, metrô → Transporte
@@ -118,6 +126,7 @@ export async function processWhatsAppMessage(
     if (!parsed.type) parsed.type = 'expense';
     if (!parsed.description) parsed.description = text;
     if (!parsed.category) parsed.category = 'Geral';
+    if (!parsed.paymentMethod) parsed.paymentMethod = null;
     parsed.aiResponse = null;
 
     return parsed;
@@ -134,6 +143,7 @@ export async function processWhatsAppMessage(
       category: fallback.category,
       installments: null,
       frequency: null,
+      paymentMethod: fallback.paymentMethod,
       categoryFilter: null,
       period: null,
       aiResponse: null,

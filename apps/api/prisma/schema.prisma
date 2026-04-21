@@ -61,6 +61,7 @@ model Workspace {
   accounts       Account[]
   transactions   Transaction[]
   recurringRules RecurringRule[]
+  creditCards    CreditCard[]
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
 }
@@ -95,15 +96,19 @@ model Transaction {
   occurredAt         DateTime
   source             String          @default("manual")
   notes              String?
+  paymentMethod      String?         // 'debit' | 'credit'
+  dueDate            DateTime?       // vencimento da fatura (crédito)
   installmentGroup   String?
   installmentCurrent Int?
   installmentTotal   Int?
   workspaceId        String
   accountId          String?
   categoryId         String?
+  creditCardId       String?
   workspace          Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   account            Account?        @relation(fields: [accountId], references: [id])
   category           Category?       @relation(fields: [categoryId], references: [id])
+  creditCard         CreditCard?     @relation(fields: [creditCardId], references: [id])
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt
 }
@@ -124,4 +129,17 @@ model RecurringRule {
   workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
+}
+
+model CreditCard {
+  id           String        @id @default(cuid())
+  name         String
+  billingDay   Int           // dia de vencimento (ex: 10)
+  closingDay   Int           @default(3) // dia de fechamento da fatura
+  limit        Decimal?
+  workspaceId  String
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 }

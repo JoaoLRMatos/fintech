@@ -17,7 +17,11 @@ import { accountRoutes } from './routes/accounts.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { whatsappRoutes } from './routes/whatsapp.js';
 import { recurringRoutes } from './routes/recurring.js';
+import { creditCardRoutes } from './routes/credit-cards.js';
+import { reportRoutes } from './routes/reports.js';
+import { importRoutes } from './routes/import.js';
 import { processRecurringRules } from './lib/recurringProcessor.js';
+import multipart from '@fastify/multipart';
 
 const app = Fastify({ logger: true });
 
@@ -52,6 +56,8 @@ app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string
   done(null, parsed);
 });
 
+await app.register(multipart, { limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB
+
 await app.register(authRoutes);
 await app.register(transactionRoutes);
 await app.register(categoryRoutes);
@@ -59,6 +65,9 @@ await app.register(accountRoutes);
 await app.register(dashboardRoutes);
 await app.register(whatsappRoutes);
 await app.register(recurringRoutes);
+await app.register(creditCardRoutes);
+await app.register(reportRoutes);
+await app.register(importRoutes);
 
 app.setErrorHandler((error: Error, _request, reply) => {
   if (error.name === 'ZodError') {

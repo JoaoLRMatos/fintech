@@ -166,14 +166,13 @@ export async function whatsappRoutes(app: FastifyInstance) {
     return { active: activeProvider };
   });
 
-  // ── Função compartilhada: processa mensagem de qualquer canal ──
   async function handleIncomingMessage(
     text: string,
     sendReply: (message: string) => Promise<void>,
     request: any,
   ) {
     const workspace = await prisma.workspace.findFirst({
-      include: { categories: true, accounts: true },
+      include: { categories: true, accounts: true, creditCards: true },
     });
 
     if (!workspace) {
@@ -184,6 +183,8 @@ export async function whatsappRoutes(app: FastifyInstance) {
     const categoryNames = workspace.categories.map((c: { name: string }) => c.name);
     const parsed = await processWhatsAppMessage(text, categoryNames);
     const account = workspace.accounts[0];
+    // Pega o primeiro cartão de crédito cadastrado (se houver)
+    const defaultCard = (workspace as any).creditCards?.[0] ?? null;
 
     function findCategory(name: string) {
       return workspace!.categories.find((c: { name: string }) =>
@@ -204,6 +205,21 @@ export async function whatsappRoutes(app: FastifyInstance) {
 
       const category = findCategory(parsed.category);
       const txType = parsed.type === 'income' ? 'INCOME' as const : 'EXPENSE' as const;
+      const isCredit = parsed.paymentMethod === 'credit';
+      const isDebit = parsed.paymentMethod === 'debit';
+
+      // Para crédito: dueDate = dia de vencimento do próximo mês
+      let dueDate: Date | null = null;
+      let creditCardId: string | null = null;
+      if (isCredit && defaultCard) {
+        const now = new Date();
+        dueDate = new Date(now.getFullYear(), now.getMonth() + 1, defaultCard.billingDay);
+        creditCardId = defaultCard.id;
+      } else if (isCredit) {
+        // Sem cartão cadastrado, usa dia 10 do próximo mês como padrão
+        const now = new Date();
+        dueDate = new Date(now.getFullYear(), now.getMonth() + 1, 10);
+      }
 
       const tx = await prisma.transaction.create({
         data: {
@@ -212,19 +228,32 @@ export async function whatsappRoutes(app: FastifyInstance) {
           description: parsed.description,
           occurredAt: new Date(),
           source: 'whatsapp',
+          paymentMethod: parsed.paymentMethod,
+          dueDate,
+          creditCardId,
           workspaceId: workspace.id,
           categoryId: category?.id ?? null,
-          accountId: account?.id ?? null,
+          // Crédito: não vincula à conta corrente; débito ou sem método: vincula
+          accountId: isCredit ? null : (account?.id ?? null),
         },
       });
 
-      if (account) {
+      // Só deduz da conta se for débito (ou método não informado)
+      if (!isCredit && account) {
         const delta = parsed.type === 'income' ? parsed.amount : -parsed.amount;
         await prisma.account.update({ where: { id: account.id }, data: { balance: { increment: delta } } });
       }
 
-      const emoji = parsed.type === 'income' ? '💰' : '💸';
-      await sendReply(`${emoji} Registrado: ${fmt(parsed.amount)} — ${parsed.description} (${parsed.category})`);
+      const emoji = parsed.type === 'income' ? '💰' : (isCredit ? '💳' : '💸');
+      let msg = `${emoji} Registrado: ${fmt(parsed.amount)} — ${parsed.description} (${parsed.category})`;
+      if (isCredit) {
+        const venc = dueDate ? dueDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' }) : 'dia 10 do próximo mês';
+        msg += `\n📅 Fatura no cartão — vencimento: ${venc}`;
+        if (!defaultCard) msg += `\n💡 Dica: cadastre seu cartão de crédito no sistema para controle automático da fatura.`;
+      } else if (isDebit) {
+        msg += `\n🏦 Lançado como débito — saldo atualizado.`;
+      }
+      await sendReply(msg);
       return { success: true, transaction: tx };
     }
 
@@ -443,7 +472,12 @@ export async function whatsappRoutes(app: FastifyInstance) {
         `💸 *Registrar gasto*\n` +
         `  "250 gasolina"\n` +
         `  "45 almoço"\n\n` +
-        `💰 *Registrar entrada*\n` +
+        `� *Gasto no crédito*\n` +
+        `  "230 barbeiro crédito"\n` +
+        `  "150 supermercado no cartão"\n\n` +
+        `🏦 *Gasto no débito*\n` +
+        `  "80 farmácia débito"\n\n` +
+        `�💰 *Registrar entrada*\n` +
         `  "recebi 5000 salário"\n\n` +
         `🛒 *Parcelamento*\n` +
         `  "200 em 6x tênis"\n` +

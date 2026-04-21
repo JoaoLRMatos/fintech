@@ -4,6 +4,7 @@ type ParsedTransaction = {
   amount: number | null;
   description: string;
   category: string;
+  paymentMethod: 'debit' | 'credit' | null;
 };
 
 const categoryRules = [
@@ -25,6 +26,7 @@ export function parseFinancialMessage(text: string): ParsedTransaction {
       amount: null,
       description: cleanText,
       category: 'Sem categoria',
+      paymentMethod: null,
     };
   }
 
@@ -33,11 +35,16 @@ export function parseFinancialMessage(text: string): ParsedTransaction {
   const type = /sal[aá]rio|recebi|entrada|ganhei|venda/i.test(description) ? 'income' : 'expense';
   const category = categoryRules.find((rule) => rule.test.test(description))?.category ?? (type === 'income' ? 'Receita' : 'Geral');
 
+  const paymentMethod: 'debit' | 'credit' | null =
+    /cr[eé]dito|cart[aã]o|no\s+cart[aã]o/i.test(description) ? 'credit' :
+    /d[eé]bito|no\s+d[eé]bito/i.test(description) ? 'debit' : null;
+
   return {
     success: true,
     type,
     amount,
-    description,
+    description: description.replace(/\s*(cr[eé]dito|d[eé]bito|no\s+cart[aã]o|no\s+cr[eé]dito|no\s+d[eé]bito)\s*/gi, ' ').trim(),
     category,
+    paymentMethod,
   };
 }
