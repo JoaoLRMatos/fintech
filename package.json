@@ -7,10 +7,11 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n web,api,worker -c blue,green,magenta \"npm run dev:web\" \"npm run dev:api\" \"npm run dev:worker\"",
+    "dev": "concurrently -n web,api,worker,baileys -c blue,green,magenta,yellow \"npm run dev:web\" \"npm run dev:api\" \"npm run dev:worker\" \"npm run dev:baileys\"",
     "dev:web": "npm run dev --workspace @finance/web",
     "dev:api": "npm run dev --workspace @finance/api",
     "dev:worker": "npm run dev --workspace @finance/worker",
+    "dev:baileys": "cd ../baileys-microservice && node index.js",
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },

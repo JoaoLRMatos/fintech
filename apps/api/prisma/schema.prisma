@@ -14,6 +14,13 @@ enum TransactionType {
   TRANSFER
 }
 
+enum Frequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
 model User {
   id           String         @id @default(cuid())
   email        String         @unique
@@ -45,16 +52,17 @@ model Membership {
 }
 
 model Workspace {
-  id             String        @id @default(cuid())
+  id             String           @id @default(cuid())
   name           String
-  currency       String        @default("BRL")
+  currency       String           @default("BRL")
   organizationId String
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   categories     Category[]
   accounts       Account[]
   transactions   Transaction[]
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  recurringRules RecurringRule[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
 }
 
 model Account {
@@ -80,19 +88,40 @@ model Category {
 }
 
 model Transaction {
+  id                 String          @id @default(cuid())
+  type               TransactionType
+  amount             Decimal
+  description        String
+  occurredAt         DateTime
+  source             String          @default("manual")
+  notes              String?
+  installmentGroup   String?
+  installmentCurrent Int?
+  installmentTotal   Int?
+  workspaceId        String
+  accountId          String?
+  categoryId         String?
+  workspace          Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  account            Account?        @relation(fields: [accountId], references: [id])
+  category           Category?       @relation(fields: [categoryId], references: [id])
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+}
+
+model RecurringRule {
   id          String          @id @default(cuid())
   type        TransactionType
   amount      Decimal
   description String
-  occurredAt  DateTime
-  source      String          @default("manual")
-  notes       String?
+  frequency   Frequency       @default(MONTHLY)
+  dayOfMonth  Int?
+  nextDueDate DateTime
+  endDate     DateTime?
+  active      Boolean         @default(true)
   workspaceId String
   accountId   String?
   categoryId  String?
   workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  account     Account?        @relation(fields: [accountId], references: [id])
-  category    Category?       @relation(fields: [categoryId], references: [id])
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 }

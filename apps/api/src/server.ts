@@ -1,4 +1,11 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+// Twilio env loaded
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fjwt from '@fastify/jwt';
@@ -9,6 +16,8 @@ import { categoryRoutes } from './routes/categories.js';
 import { accountRoutes } from './routes/accounts.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { whatsappRoutes } from './routes/whatsapp.js';
+import { recurringRoutes } from './routes/recurring.js';
+import { processRecurringRules } from './lib/recurringProcessor.js';
 
 const app = Fastify({ logger: true });
 
@@ -28,12 +37,19 @@ app.decorate('authenticate', async (request: any, reply: any) => {
 
 app.get('/health', async () => ({ ok: true, service: 'finance-api' }));
 
+// Twilio envia webhooks como application/x-www-form-urlencoded
+app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) => {
+  const parsed = Object.fromEntries(new URLSearchParams(body as string));
+  done(null, parsed);
+});
+
 await app.register(authRoutes);
 await app.register(transactionRoutes);
 await app.register(categoryRoutes);
 await app.register(accountRoutes);
 await app.register(dashboardRoutes);
 await app.register(whatsappRoutes);
+await app.register(recurringRoutes);
 
 app.setErrorHandler((error: Error, _request, reply) => {
   if (error.name === 'ZodError') {
@@ -45,7 +61,14 @@ app.setErrorHandler((error: Error, _request, reply) => {
 
 const port = Number(process.env.PORT || 3333);
 
-app.listen({ port, host: '0.0.0.0' }).catch((err) => {
+app.listen({ port, host: '0.0.0.0' }).then(() => {
+  // Cron: processa regras recorrentes a cada 1 hora
+  setInterval(() => {
+    processRecurringRules().catch((err) => app.log.error(err, 'Erro no processamento recorrente'));
+  }, 60 * 60 * 1000);
+  // Roda uma vez imediatamente ao iniciar
+  processRecurringRules().catch((err) => app.log.error(err, 'Erro no processamento recorrente (startup)'));
+}).catch((err) => {
   app.log.error(err);
   process.exit(1);
 });

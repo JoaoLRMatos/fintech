@@ -1,12 +1,14 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, ArrowLeftRight, Tag, Wallet, LogOut, MessageCircleMore } from 'lucide-react';
+import { LayoutDashboard, ArrowLeftRight, Tag, Wallet, LogOut, MessageCircleMore, Smartphone, Repeat } from 'lucide-react';
 
 const links = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/transactions', label: 'Lançamentos', icon: ArrowLeftRight },
   { to: '/categories', label: 'Categorias', icon: Tag },
   { to: '/accounts', label: 'Contas', icon: Wallet },
+  { to: '/recurring', label: 'Recorrentes', icon: Repeat },
+  { to: '/whatsapp', label: 'WhatsApp', icon: Smartphone },
 ];
 
 export function AppLayout() {

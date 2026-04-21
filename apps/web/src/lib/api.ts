@@ -43,8 +43,24 @@ export const api = {
     update: (id: string, data: any) => request<any>(`/api/accounts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => request<any>(`/api/accounts/${id}`, { method: 'DELETE' }),
   },
+  recurring: {
+    list: () => request<any[]>('/api/recurring'),
+    create: (data: any) => request<any>('/api/recurring', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: any) => request<any>(`/api/recurring/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) => request<any>(`/api/recurring/${id}`, { method: 'DELETE' }),
+  },
   dashboard: {
     summary: () => request<any>('/api/dashboard/summary'),
     monthly: (months?: number) => request<any[]>(`/api/dashboard/monthly?months=${months || 6}`),
+  },
+  whatsapp: {
+    qr: (clientId: string) => request<{ clientId: string; status: string; hasQr: boolean; qrImage: string | null }>(`/api/whatsapp/qr/${clientId}`),
+    status: (clientId: string) => request<{ clientId: string; status: string; hasQr: boolean }>(`/api/whatsapp/status/${clientId}`),
+    pair: (clientId: string, phoneNumber: string) => request<{ clientId: string; pairingCode?: string; status?: string }>(`/api/whatsapp/pair/${clientId}`, { method: 'POST', body: JSON.stringify({ phoneNumber }) }),
+    disconnect: (clientId: string) => request<{ success: boolean }>(`/api/whatsapp/disconnect/${clientId}`, { method: 'POST' }),
+    getGroupName: () => request<{ groupName: string }>('/api/whatsapp/webhook-group'),
+    setGroupName: (groupName: string) => request<{ groupName: string }>('/api/whatsapp/webhook-group', { method: 'PUT', body: JSON.stringify({ groupName }) }),
+    getProvider: () => request<{ active: string; twilioConfigured: boolean; twilioPhone: string | null }>('/api/whatsapp/provider'),
+    setProvider: (provider: string) => request<{ active: string }>('/api/whatsapp/provider', { method: 'PUT', body: JSON.stringify({ provider }) }),
   },
 };

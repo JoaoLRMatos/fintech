@@ -8,6 +8,8 @@ import { DashboardPage } from './pages/DashboardPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { CategoriesPage } from './pages/CategoriesPage';
 import { AccountsPage } from './pages/AccountsPage';
+import { RecurringPage } from './pages/RecurringPage';
+import { WhatsAppPage } from './pages/WhatsAppPage';
 
 function GuestRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -29,6 +31,8 @@ export default function App() {
             <Route path="/transactions" element={<TransactionsPage />} />
             <Route path="/categories" element={<CategoriesPage />} />
             <Route path="/accounts" element={<AccountsPage />} />
+            <Route path="/recurring" element={<RecurringPage />} />
+            <Route path="/whatsapp" element={<WhatsAppPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
