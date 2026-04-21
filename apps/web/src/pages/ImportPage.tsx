@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { Upload, FileSpreadsheet, CheckCircle, AlertCircle, ChevronRight, X } from 'lucide-react';
+import { Upload, FileSpreadsheet, CheckCircle, AlertCircle, ChevronRight, X, Sparkles } from 'lucide-react';
 
 function fmt(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -31,7 +31,8 @@ export function ImportPage() {
     mutationFn: (f: File) => api.import.preview(f),
     onSuccess: (data) => {
       setPreview(data);
-      setRows(data.preview);
+      // allRows contém TODAS as linhas (preview + restante); preview contém só as 20 primeiras para exibir
+      setRows(data.allRows ?? data.preview);
       setStep('preview');
     },
   });
@@ -111,7 +112,7 @@ export function ImportPage() {
           {previewMut.isPending && (
             <div className="mt-4 flex items-center justify-center gap-2 text-sm text-slate-400">
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
-              Lendo planilha...
+              <span>Analisando planilha com IA...</span>
             </div>
           )}
           {previewMut.isError && (
@@ -137,6 +138,23 @@ export function ImportPage() {
             </button>
           </div>
 
+          {/* AI explanation banner */}
+          {preview?.usedAI && preview?.aiExplanation && (
+            <div className="flex items-start gap-3 rounded-xl border border-emerald-800/40 bg-emerald-500/5 p-3">
+              <Sparkles className="h-4 w-4 text-emerald-400 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-xs font-medium text-emerald-400">Analisado por IA</p>
+                <p className="text-xs text-slate-400 mt-0.5">{preview.aiExplanation}</p>
+              </div>
+            </div>
+          )}
+          {!preview?.usedAI && (
+            <div className="flex items-start gap-3 rounded-xl border border-amber-800/40 bg-amber-500/5 p-3">
+              <AlertCircle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-400">IA não disponível — usando detecção automática por padrões. Verifique os tipos antes de confirmar.</p>
+            </div>
+          )}
+
           {/* Account selector */}
           <div className="flex items-center gap-3">
             <label className="text-sm text-slate-400 whitespace-nowrap">Vincular à conta:</label>
@@ -147,7 +165,7 @@ export function ImportPage() {
             <span className="text-xs text-slate-500">(opcional — atualiza saldo)</span>
           </div>
 
-          {/* Rows table */}
+          {/* Rows table — mostra preview (20 primeiras), mas confirma todas */}
           <div className="rounded-2xl border border-slate-800 bg-slate-900 overflow-hidden">
             <div className="grid grid-cols-[auto,1fr,auto,auto,auto] gap-0 text-xs text-slate-500 px-4 py-2 border-b border-slate-800 font-medium">
               <span className="pr-4">Data</span>
@@ -157,7 +175,7 @@ export function ImportPage() {
               <span></span>
             </div>
             <div className="max-h-96 overflow-y-auto">
-              {rows.map((row, idx) => (
+              {rows.slice(0, 20).map((row, idx) => (
                 <div key={row.rowIndex} className="grid grid-cols-[auto,1fr,auto,auto,auto] items-center gap-0 px-4 py-2.5 border-b border-slate-800/60 last:border-0 hover:bg-slate-800/30">
                   <span className="pr-4 text-xs text-slate-500 whitespace-nowrap">
                     {row.date ? new Date(row.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—'}
@@ -175,6 +193,11 @@ export function ImportPage() {
                   </button>
                 </div>
               ))}
+              {rows.length > 20 && (
+                <div className="px-4 py-2 text-xs text-slate-500 text-center border-t border-slate-800">
+                  + {rows.length - 20} linhas adicionais não exibidas (todas serão importadas)
+                </div>
+              )}
             </div>
           </div>
 

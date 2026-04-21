@@ -6,7 +6,7 @@ export interface GroqMessage {
   content: string;
 }
 
-export async function groqChat(messages: GroqMessage[], temperature = 0.1): Promise<string> {
+export async function groqChat(messages: GroqMessage[], temperature = 0.1, maxTokens = 1024): Promise<string> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error('GROQ_API_KEY não configurada');
 
@@ -20,7 +20,7 @@ export async function groqChat(messages: GroqMessage[], temperature = 0.1): Prom
       model: MODEL,
       messages,
       temperature,
-      max_tokens: 1024,
+      max_tokens: maxTokens,
       response_format: { type: 'json_object' },
     }),
   });
