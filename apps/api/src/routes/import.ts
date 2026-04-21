@@ -281,9 +281,6 @@ export async function importRoutes(app: FastifyInstance) {
   });
 }
 
-
-// Detecta se uma string parece uma data
-function parseDate(val: unknown): Date | null {
   if (!val) return null;
   // Excel serial number
   if (typeof val === 'number' && val > 1000) {
