@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node build.cjs",
+    "build": "vite build",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
