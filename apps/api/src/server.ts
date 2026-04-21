@@ -21,7 +21,16 @@ import { processRecurringRules } from './lib/recurringProcessor.js';
 
 const app = Fastify({ logger: true });
 
-await app.register(cors, { origin: true, credentials: true });
+await app.register(cors, {
+  origin: (origin, cb) => {
+    const allowed = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const allowList = allowed.split(',').map(s => s.trim());
+    // Permite requests sem origin (mobile, curl, Postman) e origins permitidas
+    if (!origin || allowList.includes(origin)) return cb(null, true);
+    cb(new Error(`CORS: ${origin} não permitido`), false);
+  },
+  credentials: true,
+});
 await app.register(cookie);
 await app.register(fjwt, { secret: process.env.JWT_SECRET || 'dev-secret-change-me' });
 
