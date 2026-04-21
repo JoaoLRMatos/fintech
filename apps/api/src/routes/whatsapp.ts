@@ -107,7 +107,7 @@ export async function whatsappRoutes(app: FastifyInstance) {
         await fetch(`${whatsappUrl}/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ clientId: body.clientId, number: body.from, message }),
+          body: JSON.stringify({ clientId: body.clientId, number: body.from, message: `*🤖 Financeiro*\n\n${message}` }),
         });
       } catch (err) {
         request.log.error(err, 'Falha ao enviar confirmação WhatsApp (Baileys)');
@@ -181,10 +181,20 @@ export async function whatsappRoutes(app: FastifyInstance) {
     }
 
     const categoryNames = workspace.categories.map((c: { name: string }) => c.name);
-    const parsed = await processWhatsAppMessage(text, categoryNames);
+    const creditCardList = (workspace as any).creditCards?.map((c: any) => ({ id: c.id, name: c.name })) ?? [];
+    const parsed = await processWhatsAppMessage(text, categoryNames, creditCardList);
     const account = workspace.accounts[0];
-    // Pega o primeiro cartão de crédito cadastrado (se houver)
-    const defaultCard = (workspace as any).creditCards?.[0] ?? null;
+    const creditCards = (workspace as any).creditCards ?? [];
+    const defaultCard = creditCards[0] ?? null;
+
+    // Encontra o cartão pelo hint da IA (apelido/nome parcial) ou usa o padrão
+    function findCreditCard() {
+      if (!parsed.creditCardHint) return defaultCard;
+      const hint = parsed.creditCardHint.toLowerCase();
+      return creditCards.find((c: any) =>
+        c.name.toLowerCase().includes(hint) || hint.includes(c.name.toLowerCase())
+      ) ?? defaultCard;
+    }
 
     function findCategory(name: string) {
       return workspace!.categories.find((c: { name: string }) =>
@@ -207,14 +217,15 @@ export async function whatsappRoutes(app: FastifyInstance) {
       const txType = parsed.type === 'income' ? 'INCOME' as const : 'EXPENSE' as const;
       const isCredit = parsed.paymentMethod === 'credit';
       const isDebit = parsed.paymentMethod === 'debit';
+      const matchedCard = findCreditCard();
 
       // Para crédito: dueDate = dia de vencimento do próximo mês
       let dueDate: Date | null = null;
       let creditCardId: string | null = null;
-      if (isCredit && defaultCard) {
+      if (isCredit && matchedCard) {
         const now = new Date();
-        dueDate = new Date(now.getFullYear(), now.getMonth() + 1, defaultCard.billingDay);
-        creditCardId = defaultCard.id;
+        dueDate = new Date(now.getFullYear(), now.getMonth() + 1, matchedCard.billingDay);
+        creditCardId = matchedCard.id;
       } else if (isCredit) {
         // Sem cartão cadastrado, usa dia 10 do próximo mês como padrão
         const now = new Date();
@@ -248,8 +259,9 @@ export async function whatsappRoutes(app: FastifyInstance) {
       let msg = `${emoji} Registrado: ${fmt(parsed.amount)} — ${parsed.description} (${parsed.category})`;
       if (isCredit) {
         const venc = dueDate ? dueDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' }) : 'dia 10 do próximo mês';
-        msg += `\n📅 Fatura no cartão — vencimento: ${venc}`;
-        if (!defaultCard) msg += `\n💡 Dica: cadastre seu cartão de crédito no sistema para controle automático da fatura.`;
+        const cardName = matchedCard?.name ?? parsed.creditCardHint ?? 'cartão';
+        msg += `\n💳 Fatura: ${cardName} — vencimento: ${venc}`;
+        if (!matchedCard) msg += `\n💡 Dica: cadastre seu cartão de crédito no sistema para controle automático da fatura.`;
       } else if (isDebit) {
         msg += `\n🏦 Lançado como débito — saldo atualizado.`;
       }

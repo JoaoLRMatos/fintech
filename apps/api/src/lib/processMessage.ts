@@ -20,18 +20,30 @@ export interface ProcessedMessage {
   installments: number | null;
   frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY' | null;
   paymentMethod: 'debit' | 'credit' | null;
+  creditCardHint: string | null;
   categoryFilter: string | null;
   period: string | null;
   aiResponse: string | null;
 }
 
-function buildSystemPrompt(categoryNames: string[], today: string): string {
+function buildSystemPrompt(
+  categoryNames: string[],
+  today: string,
+  creditCards: { id: string; name: string }[],
+): string {
+  const cardsInfo = creditCards.length > 0
+    ? creditCards.map(c => `- "${c.name}"`).join('\n')
+    : '- Nenhum cartão cadastrado';
+
   return `Você é um assistente financeiro inteligente que interpreta mensagens do WhatsApp em português brasileiro.
 
 DATA DE HOJE: ${today}
 
 CATEGORIAS DISPONÍVEIS NO SISTEMA:
 ${categoryNames.length > 0 ? categoryNames.map(c => `- ${c}`).join('\n') : '- Nenhuma categoria cadastrada'}
+
+CARTÕES DE CRÉDITO CADASTRADOS:
+${cardsInfo}
 
 Analise a mensagem do usuário e retorne APENAS um JSON (sem markdown, sem texto extra) com esta estrutura:
 
@@ -44,6 +56,7 @@ Analise a mensagem do usuário e retorne APENAS um JSON (sem markdown, sem texto
   "installments": number | null,
   "frequency": "MONTHLY" | "WEEKLY" | "DAILY" | "YEARLY" | null,
   "paymentMethod": "credit" | "debit" | null,
+  "creditCardHint": "nome exato do cartão cadastrado que melhor corresponde" | null,
   "categoryFilter": "nome da categoria filtrada" | null,
   "period": "month" | "week" | "year" | null,
   "aiResponse": null
@@ -78,8 +91,29 @@ REGRAS DE CLASSIFICAÇÃO DE INTENT:
 REGRAS DE MEIO DE PAGAMENTO (paymentMethod):
 - "crédito", "no crédito", "no cartão", "cartão de crédito" → paymentMethod = "credit"
 - "débito", "no débito", "no cheque" → paymentMethod = "debit"
+- Se mencionar qualquer cartão cadastrado → paymentMethod = "credit" automaticamente
 - Se não mencionado → paymentMethod = null
-- Exemplos: "230 barbeiro crédito" → credit | "50 gasolina débito" → debit | "80 ifood" → null
+
+REGRAS DE CARTÃO (creditCardHint):
+- Compare o que o usuário disse com os CARTÕES CADASTRADOS acima e retorne o nome EXATO do cartão correspondente
+- Use seu conhecimento de apelidos brasileiros de bancos e cartões:
+  • "BB", "banco do brasil", "ourocard" → cartão com "Banco do Brasil" ou "BB" no nome
+  • "roxinho", "nubank", "nu" → cartão com "Nubank" no nome
+  • "laranjinha", "inter", "banco inter" → cartão com "Inter" no nome
+  • "itaú", "itauzinho" → cartão com "Itaú" no nome
+  • "brad", "bradesco", "next" → cartão com "Bradesco" ou "Next" no nome
+  • "c6", "c6 bank" → cartão com "C6" no nome
+  • "xp" → cartão com "XP" no nome
+  • "santander" → cartão com "Santander" no nome
+  • "caixa", "cef" → cartão com "Caixa" no nome
+  • "avenue", "will", "wise" → cartões internacionais com esses nomes
+- Se nenhum cartão cadastrado corresponder mas o usuário mencionou um cartão → retorne o apelido que o usuário usou
+- Se não mencionou nenhum cartão → null
+
+REGRAS DE VALOR POR SERVIÇO (amount):
+- Se o usuário NÃO informar o valor mas mencionar um serviço de assinatura conhecido, use o seu melhor conhecimento sobre o preço atual no Brasil para aquele plano específico.
+- Os preços de assinaturas mudam com frequência. Se não tiver certeza do valor exato para o plano mencionado → deixe amount = null e o usuário informará manualmente.
+- Prefira deixar amount = null a colocar um valor errado.
 
 REGRAS DE CATEGORIZAÇÃO:
 - Gasolina, combustível, uber, 99, ônibus, metrô → Transporte
@@ -105,6 +139,7 @@ REGRAS GERAIS:
 export async function processWhatsAppMessage(
   text: string,
   categoryNames: string[],
+  creditCards: { id: string; name: string }[] = [],
 ): Promise<ProcessedMessage> {
   const today = new Date().toLocaleDateString('pt-BR', {
     weekday: 'long',
@@ -115,7 +150,7 @@ export async function processWhatsAppMessage(
 
   try {
     const raw = await groqChat([
-      { role: 'system', content: buildSystemPrompt(categoryNames, today) },
+      { role: 'system', content: buildSystemPrompt(categoryNames, today, creditCards) },
       { role: 'user', content: text },
     ]);
 
@@ -127,6 +162,7 @@ export async function processWhatsAppMessage(
     if (!parsed.description) parsed.description = text;
     if (!parsed.category) parsed.category = 'Geral';
     if (!parsed.paymentMethod) parsed.paymentMethod = null;
+    if (!parsed.creditCardHint) parsed.creditCardHint = null;
     parsed.aiResponse = null;
 
     return parsed;
@@ -144,6 +180,7 @@ export async function processWhatsAppMessage(
       installments: null,
       frequency: null,
       paymentMethod: fallback.paymentMethod,
+      creditCardHint: null,
       categoryFilter: null,
       period: null,
       aiResponse: null,

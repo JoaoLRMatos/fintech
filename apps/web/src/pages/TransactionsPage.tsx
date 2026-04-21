@@ -20,15 +20,16 @@ export function TransactionsPage() {
   const { data, isLoading } = useQuery({ queryKey: ['transactions', params], queryFn: () => api.transactions.list(params) });
   const { data: categories } = useQuery({ queryKey: ['categories'], queryFn: api.categories.list });
   const { data: accounts } = useQuery({ queryKey: ['accounts'], queryFn: api.accounts.list });
+  const { data: creditCards } = useQuery({ queryKey: ['credit-cards'], queryFn: api.creditCards.list });
 
   const createMut = useMutation({ mutationFn: api.transactions.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['dashboard-summary'] }); setShowForm(false); resetForm(); } });
   const updateMut = useMutation({ mutationFn: ({ id, ...d }: any) => api.transactions.update(id, d), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['dashboard-summary'] }); setEditing(null); setShowForm(false); resetForm(); } });
   const deleteMut = useMutation({ mutationFn: api.transactions.delete, onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['dashboard-summary'] }); } });
 
-  const [form, setForm] = useState({ type: 'EXPENSE', amount: '', description: '', occurredAt: new Date().toISOString().slice(0, 10), categoryId: '', accountId: '', notes: '' });
+  const [form, setForm] = useState({ type: 'EXPENSE', amount: '', description: '', occurredAt: new Date().toISOString().slice(0, 10), categoryId: '', accountId: '', creditCardId: '', paymentMethod: '', notes: '' });
 
   function resetForm() {
-    setForm({ type: 'EXPENSE', amount: '', description: '', occurredAt: new Date().toISOString().slice(0, 10), categoryId: '', accountId: '', notes: '' });
+    setForm({ type: 'EXPENSE', amount: '', description: '', occurredAt: new Date().toISOString().slice(0, 10), categoryId: '', accountId: '', creditCardId: '', paymentMethod: '', notes: '' });
   }
 
   function startEdit(tx: any) {
@@ -40,6 +41,8 @@ export function TransactionsPage() {
       occurredAt: tx.occurredAt?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),
       categoryId: tx.categoryId ?? '',
       accountId: tx.accountId ?? '',
+      creditCardId: tx.creditCardId ?? '',
+      paymentMethod: tx.paymentMethod ?? '',
       notes: tx.notes ?? '',
     });
     setShowForm(true);
@@ -47,7 +50,16 @@ export function TransactionsPage() {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const payload = { ...form, amount: Number(form.amount), categoryId: form.categoryId || undefined, accountId: form.accountId || undefined, notes: form.notes || undefined };
+    const isCredit = form.paymentMethod === 'credit';
+    const payload = {
+      ...form,
+      amount: Number(form.amount),
+      categoryId: form.categoryId || undefined,
+      accountId: isCredit ? undefined : (form.accountId || undefined),
+      creditCardId: isCredit ? (form.creditCardId || undefined) : undefined,
+      paymentMethod: form.paymentMethod || undefined,
+      notes: form.notes || undefined,
+    };
     if (editing) {
       updateMut.mutate({ id: editing.id, ...payload });
     } else {
@@ -97,12 +109,30 @@ export function TransactionsPage() {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-slate-400">Conta</label>
-              <select value={form.accountId} onChange={e => setForm(f => ({ ...f, accountId: e.target.value }))} className={inputCls}>
-                <option value="">Sem conta</option>
-                {accounts?.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              <label className="mb-1 block text-xs text-slate-400">Meio de pagamento</label>
+              <select value={form.paymentMethod} onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value, accountId: '', creditCardId: '' }))} className={inputCls}>
+                <option value="">Nenhum</option>
+                <option value="debit">Débito</option>
+                <option value="credit">Crédito</option>
               </select>
             </div>
+            {form.paymentMethod === 'credit' ? (
+              <div>
+                <label className="mb-1 block text-xs text-slate-400">Cartão de crédito</label>
+                <select value={form.creditCardId} onChange={e => setForm(f => ({ ...f, creditCardId: e.target.value }))} className={inputCls}>
+                  <option value="">Selecione o cartão</option>
+                  {creditCards?.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            ) : (
+              <div>
+                <label className="mb-1 block text-xs text-slate-400">Conta</label>
+                <select value={form.accountId} onChange={e => setForm(f => ({ ...f, accountId: e.target.value }))} className={inputCls}>
+                  <option value="">Sem conta</option>
+                  {accounts?.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+              </div>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-xs text-slate-400">Observações</label>
@@ -156,7 +186,11 @@ export function TransactionsPage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-slate-400">{tx.account?.name ?? '—'}</td>
+                  <td className="px-4 py-3 text-slate-400">
+                    {tx.creditCardId
+                      ? <span className="inline-flex items-center gap-1 text-violet-400"><span>💳</span>{creditCards?.find((c: any) => c.id === tx.creditCardId)?.name ?? 'Crédito'}</span>
+                      : (tx.account?.name ?? '—')}
+                  </td>
                   <td className={`px-4 py-3 text-right font-medium ${tx.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
                     {tx.type === 'INCOME' ? '+' : '-'} {fmt(Number(tx.amount))}
                   </td>

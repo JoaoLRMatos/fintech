@@ -49,17 +49,26 @@ export async function transactionRoutes(app: FastifyInstance) {
       description: z.string().min(1),
       occurredAt: z.string().transform(v => new Date(v)),
       categoryId: z.string().optional(),
-      accountId: z.string().optional(),
+      accountId: z.string().nullable().optional(),
+      creditCardId: z.string().nullable().optional(),
+      paymentMethod: z.enum(['debit', 'credit']).nullable().optional(),
       notes: z.string().optional(),
       source: z.string().default('manual'),
     }).parse(request.body);
 
+    const isCredit = body.paymentMethod === 'credit';
+
     const tx = await prisma.transaction.create({
-      data: { ...body, workspaceId },
+      data: {
+        ...body,
+        workspaceId,
+        // Crédito: não vincula à conta corrente
+        accountId: isCredit ? null : (body.accountId ?? undefined),
+      },
       include: { category: true, account: true },
     });
 
-    if (body.accountId) {
+    if (!isCredit && body.accountId) {
       const delta = body.type === 'INCOME' ? body.amount : -body.amount;
       await prisma.account.update({ where: { id: body.accountId }, data: { balance: { increment: delta } } });
     }
@@ -77,6 +86,8 @@ export async function transactionRoutes(app: FastifyInstance) {
       occurredAt: z.string().transform(v => new Date(v)).optional(),
       categoryId: z.string().nullable().optional(),
       accountId: z.string().nullable().optional(),
+      creditCardId: z.string().nullable().optional(),
+      paymentMethod: z.enum(['debit', 'credit']).nullable().optional(),
       notes: z.string().nullable().optional(),
     }).parse(request.body);
 
