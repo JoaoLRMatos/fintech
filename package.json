@@ -14,6 +14,7 @@
     "dev:baileys": "cd ../baileys-microservice && node index.js",
     "build": "npm run build --workspaces --if-present",
     "build:api": "npm run build --workspace @finance/api",
+    "build:web": "npm run build --workspace @finance/web",
     "start:api": "npm run start --workspace @finance/api",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
