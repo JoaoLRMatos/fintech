@@ -11,19 +11,34 @@ let activeProvider: 'baileys' | 'twilio' = 'baileys';
 export async function whatsappRoutes(app: FastifyInstance) {
   const baileysUrl = process.env.WHATSAPP_BASE_URL || 'http://localhost:3030/whatsapp';
 
+  // Helper: faz proxy para o Baileys e lida com erros graciosamente
+  async function baileysProxy(url: string, options?: RequestInit): Promise<{ ok: boolean; status: number; data: any }> {
+    try {
+      const res = await fetch(url, options);
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        return { ok: false, status: 503, data: { error: 'Baileys microservice indisponível ou não configurado.' } };
+      }
+      const data = await res.json();
+      return { ok: res.ok, status: res.status, data };
+    } catch {
+      return { ok: false, status: 503, data: { error: 'Baileys microservice indisponível. Verifique se está rodando.' } };
+    }
+  }
+
   // ── Proxy: QR code (JSON com imagem base64) ──
   app.get('/api/whatsapp/qr/:clientId', { preHandler: [app.authenticate] }, async (request, reply) => {
     const { clientId } = request.params as { clientId: string };
-    const res = await fetch(`${baileysUrl}/qr-json/${clientId}`);
-    const data = await res.json();
+    const { ok, status, data } = await baileysProxy(`${baileysUrl}/qr-json/${clientId}`);
+    if (!ok) return reply.status(status).send(data);
     return data;
   });
 
   // ── Proxy: Status ──
   app.get('/api/whatsapp/status/:clientId', { preHandler: [app.authenticate] }, async (request, reply) => {
     const { clientId } = request.params as { clientId: string };
-    const res = await fetch(`${baileysUrl}/status/${clientId}`);
-    const data = await res.json();
+    const { ok, status, data } = await baileysProxy(`${baileysUrl}/status/${clientId}`);
+    if (!ok) return reply.status(status).send(data);
     return data;
   });
 
@@ -31,42 +46,43 @@ export async function whatsappRoutes(app: FastifyInstance) {
   app.post('/api/whatsapp/pair/:clientId', { preHandler: [app.authenticate] }, async (request, reply) => {
     const { clientId } = request.params as { clientId: string };
     const body = z.object({ phoneNumber: z.string() }).parse(request.body);
-    const res = await fetch(`${baileysUrl}/pair/${clientId}`, {
+    const { ok, status, data } = await baileysProxy(`${baileysUrl}/pair/${clientId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    const data = await res.json();
-    if (!res.ok) return reply.status(res.status).send(data);
+    if (!ok) return reply.status(status).send(data);
     return data;
   });
 
   // ── Proxy: Disconnect ──
   app.post('/api/whatsapp/disconnect/:clientId', { preHandler: [app.authenticate] }, async (request, reply) => {
     const { clientId } = request.params as { clientId: string };
-    const res = await fetch(`${baileysUrl}/disconnect/${clientId}`, {
+    const { ok, status, data } = await baileysProxy(`${baileysUrl}/disconnect/${clientId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ forgetAuth: true }),
     });
-    const data = await res.json();
+    if (!ok) return reply.status(status).send(data);
     return data;
   });
 
   // ── Proxy: Webhook group name ──
-  app.get('/api/whatsapp/webhook-group', { preHandler: [app.authenticate] }, async () => {
-    const res = await fetch(`${baileysUrl}/webhook-group`);
-    return res.json();
+  app.get('/api/whatsapp/webhook-group', { preHandler: [app.authenticate] }, async (_request, reply) => {
+    const { ok, status, data } = await baileysProxy(`${baileysUrl}/webhook-group`);
+    if (!ok) return reply.status(status).send(data);
+    return data;
   });
 
-  app.put('/api/whatsapp/webhook-group', { preHandler: [app.authenticate] }, async (request) => {
+  app.put('/api/whatsapp/webhook-group', { preHandler: [app.authenticate] }, async (request, reply) => {
     const body = z.object({ groupName: z.string() }).parse(request.body);
-    const res = await fetch(`${baileysUrl}/webhook-group`, {
+    const { ok, status, data } = await baileysProxy(`${baileysUrl}/webhook-group`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    return res.json();
+    if (!ok) return reply.status(status).send(data);
+    return data;
   });
 
   // ── Webhook: recebe mensagens do Baileys ──

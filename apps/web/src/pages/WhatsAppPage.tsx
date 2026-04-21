@@ -15,19 +15,22 @@ export function WhatsAppPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Queries ──
-  const { data: qrData, refetch: refetchQr } = useQuery({
+  const { data: qrData, error: qrError, refetch: refetchQr } = useQuery({
     queryKey: ['whatsapp-qr', CLIENT_ID],
     queryFn: () => api.whatsapp.qr(CLIENT_ID),
     refetchInterval: (query) => {
       const d = query.state.data;
       if (d?.status === 'connected') return false;
+      if (query.state.error) return false; // Para de tentar se Baileys não está disponível
       return 3000;
     },
+    retry: 1,
   });
 
   const { data: groupData } = useQuery({
     queryKey: ['whatsapp-group'],
     queryFn: api.whatsapp.getGroupName,
+    retry: 1,
   });
 
   useEffect(() => {
@@ -75,6 +78,7 @@ export function WhatsAppPage() {
   const activeProvider = providerData?.active || 'baileys';
 
   const connected = qrData?.status === 'connected';
+  const baileysOffline = !!qrError;
   const inputCls = 'w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2.5 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none';
 
   return (
@@ -164,8 +168,21 @@ export function WhatsAppPage() {
         )}
       </div>
 
+      {/* ── Baileys offline warning ── */}
+      {baileysOffline && activeProvider === 'baileys' && (
+        <div className="rounded-2xl border border-amber-800/50 bg-amber-500/5 p-4">
+          <p className="text-sm text-amber-400 font-medium">⚠️ Baileys microservice não está acessível</p>
+          <p className="text-xs text-slate-400 mt-1">
+            O serviço Baileys precisa estar rodando e acessível pela API. Configure a variável <code className="text-slate-300">WHATSAPP_BASE_URL</code> com a URL pública do Baileys, ou use o canal Twilio.
+          </p>
+          <button onClick={() => refetchQr()} className="mt-2 text-xs text-amber-400 hover:underline flex items-center gap-1">
+            <RefreshCw className="h-3 w-3" /> Tentar novamente
+          </button>
+        </div>
+      )}
+
       {/* ── Connection (QR / Pairing Code) — só mostra se provider = baileys ── */}
-      {!connected && activeProvider === 'baileys' && (
+      {!connected && activeProvider === 'baileys' && !baileysOffline && (
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
           <div className="flex items-center gap-2">
             <Smartphone className="h-5 w-5 text-emerald-400" />
