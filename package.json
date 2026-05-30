@@ -1,18 +1,16 @@
 {
-  "name": "finance-whatsapp-saas",
+  "name": "finance-saas",
   "private": true,
   "version": "0.1.0",
   "workspaces": [
-    "apps/*",
-    "packages/*"
+    "apps/api",
+    "apps/web"
   ],
   "scripts": {
-    "dev": "concurrently -n web,api,worker,baileys -c blue,green,magenta,yellow \"npm run dev:web\" \"npm run dev:api\" \"npm run dev:worker\" \"npm run dev:baileys\"",
+    "dev": "concurrently -n web,api -c blue,green \"npm run dev:web\" \"npm run dev:api\"",
     "dev:web": "npm run dev --workspace @finance/web",
     "dev:api": "npm run dev --workspace @finance/api",
-    "dev:worker": "npm run dev --workspace @finance/worker",
-    "dev:baileys": "cd ../baileys-microservice && node index.js",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build:api && npm run build:web",
     "build:api": "npm run build --workspace @finance/api",
     "build:web": "npm run build --workspace @finance/web",
     "start:api": "npm run start --workspace @finance/api",

@@ -3,9 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
 }
 
 enum TransactionType {
@@ -22,17 +21,17 @@ enum Frequency {
 }
 
 model User {
-  id           String         @id @default(cuid())
-  email        String         @unique
+  id           String       @id @default(cuid()) @map("_id")
+  email        String       @unique
   passwordHash String
   fullName     String?
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
   memberships  Membership[]
 }
 
 model Organization {
-  id          String       @id @default(cuid())
+  id          String       @id @default(cuid()) @map("_id")
   name        String
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
@@ -41,63 +40,63 @@ model Organization {
 }
 
 model Membership {
-  id             String       @id @default(cuid())
+  id             String       @id @default(cuid()) @map("_id")
   role           String       @default("owner")
   userId         String
   organizationId String
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id])
+  organization   Organization @relation(fields: [organizationId], references: [id])
 
   @@unique([userId, organizationId])
 }
 
 model Workspace {
-  id             String           @id @default(cuid())
+  id             String          @id @default(cuid()) @map("_id")
   name           String
-  currency       String           @default("BRL")
+  currency       String          @default("BRL")
   organizationId String
-  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization    @relation(fields: [organizationId], references: [id])
   categories     Category[]
   accounts       Account[]
   transactions   Transaction[]
   recurringRules RecurringRule[]
   creditCards    CreditCard[]
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 }
 
 model Account {
-  id          String         @id @default(cuid())
-  name        String
-  type        String
-  balance     Decimal        @default(0)
-  workspaceId String
-  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  id           String        @id @default(cuid()) @map("_id")
+  name         String
+  type         String
+  balance      Float         @default(0)
+  workspaceId  String
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id])
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
   transactions Transaction[]
 }
 
 model Category {
-  id          String         @id @default(cuid())
-  name        String
-  kind        TransactionType
-  color       String?
-  workspaceId String
-  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  id           String          @id @default(cuid()) @map("_id")
+  name         String
+  kind         TransactionType
+  color        String?
+  workspaceId  String
+  workspace    Workspace       @relation(fields: [workspaceId], references: [id])
   transactions Transaction[]
 }
 
 model Transaction {
-  id                 String          @id @default(cuid())
+  id                 String          @id @default(cuid()) @map("_id")
   type               TransactionType
-  amount             Decimal
+  amount             Float
   description        String
   occurredAt         DateTime
   source             String          @default("manual")
   notes              String?
-  paymentMethod      String?         // 'debit' | 'credit'
-  dueDate            DateTime?       // vencimento da fatura (crédito)
+  paymentMethod      String?
+  dueDate            DateTime?
   installmentGroup   String?
   installmentCurrent Int?
   installmentTotal   Int?
@@ -105,18 +104,18 @@ model Transaction {
   accountId          String?
   categoryId         String?
   creditCardId       String?
-  workspace          Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  account            Account?        @relation(fields: [accountId], references: [id])
-  category           Category?       @relation(fields: [categoryId], references: [id])
-  creditCard         CreditCard?     @relation(fields: [creditCardId], references: [id])
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
+  workspace          Workspace   @relation(fields: [workspaceId], references: [id])
+  account            Account?    @relation(fields: [accountId], references: [id])
+  category           Category?   @relation(fields: [categoryId], references: [id])
+  creditCard         CreditCard? @relation(fields: [creditCardId], references: [id])
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
 }
 
 model RecurringRule {
-  id          String          @id @default(cuid())
+  id          String          @id @default(cuid()) @map("_id")
   type        TransactionType
-  amount      Decimal
+  amount      Float
   description String
   frequency   Frequency       @default(MONTHLY)
   dayOfMonth  Int?
@@ -126,19 +125,19 @@ model RecurringRule {
   workspaceId String
   accountId   String?
   categoryId  String?
-  workspace   Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id])
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 }
 
 model CreditCard {
-  id           String        @id @default(cuid())
+  id           String        @id @default(cuid()) @map("_id")
   name         String
-  billingDay   Int           // dia de vencimento (ex: 10)
-  closingDay   Int           @default(3) // dia de fechamento da fatura
-  limit        Decimal?
+  billingDay   Int
+  closingDay   Int           @default(3)
+  limit        Float?
   workspaceId  String
-  workspace    Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace    Workspace     @relation(fields: [workspaceId], references: [id])
   transactions Transaction[]
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
