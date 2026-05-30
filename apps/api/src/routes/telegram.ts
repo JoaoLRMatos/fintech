@@ -56,28 +56,26 @@ export async function telegramRoutes(app: FastifyInstance) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
 
-  // O Render seta RENDER=true e RENDER_EXTERNAL_URL (a URL pública do serviço).
-  const isRender = !!process.env.RENDER;
-  const publicUrl = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL;
+  const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+  // URL pública: Render seta RENDER_EXTERNAL_URL automaticamente.
+  // Fallback: API_PUBLIC_URL definida manualmente pelo usuário no dashboard.
+  const publicUrl = process.env.RENDER_EXTERNAL_URL
+    || process.env.API_PUBLIC_URL
+    || process.env.PUBLIC_URL;
 
-  // Long-polling SÓ em desenvolvimento local. Em produção dois processos puxando
-  // o mesmo bot (seu dev local + o Render) geram o erro 409 "Conflict: terminated
-  // by other getUpdates request". Por isso em produção usamos webhook, não polling.
-  const usePolling = process.env.TELEGRAM_USE_POLLING === 'true'
-    && process.env.NODE_ENV !== 'production'
-    && !isRender;
+  const usePolling = process.env.TELEGRAM_USE_POLLING === 'true' && !isProd;
 
   if (token && usePolling) {
     deleteTelegramWebhook(token).catch(() => {});
     startPolling(token, app.log);
-  } else if (token && isRender && publicUrl) {
-    // Em produção: registra o webhook automaticamente apontando para esta instância.
-    // O Telegram passa a entregar as mensagens em POST /api/telegram/webhook,
-    // eliminando o polling (e o 409) sem deixar o bot mudo em produção.
+  } else if (token && isProd && publicUrl) {
+    // Produção: registra o webhook automaticamente.
     const webhookUrl = `${publicUrl.replace(/\/$/, '')}/api/telegram/webhook`;
     setTelegramWebhook(token, webhookUrl, webhookSecret)
       .then(() => app.log.info({ webhookUrl }, 'Telegram: webhook registrado'))
       .catch((err) => app.log.error(err, 'Telegram: falha ao registrar webhook'));
+  } else if (token && isProd && !publicUrl) {
+    app.log.warn('Telegram: RENDER_EXTERNAL_URL ou API_PUBLIC_URL não definido — webhook não registrado. Defina API_PUBLIC_URL=https://finance-api-le0h.onrender.com no Render.');
   }
 
   // ── Webhook: recebe mensagens do Telegram ──
