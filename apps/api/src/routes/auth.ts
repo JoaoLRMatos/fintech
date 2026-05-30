@@ -58,12 +58,13 @@ export async function authRoutes(app: FastifyInstance) {
 
     const workspace = org.workspaces[0];
     const token = app.jwt.sign({ userId: user.id, workspaceId: workspace.id }, { expiresIn: '7d' });
+    const isProd = process.env.NODE_ENV === 'production';
 
     reply.setCookie('token', token, {
       path: '/',
       httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      sameSite: isProd ? 'none' : 'lax',
+      secure: isProd,
       maxAge: 60 * 60 * 24 * 7,
     });
 
@@ -89,12 +90,13 @@ export async function authRoutes(app: FastifyInstance) {
     if (!workspace) return reply.status(500).send({ error: 'Nenhum workspace encontrado.' });
 
     const token = app.jwt.sign({ userId: user.id, workspaceId: workspace.id }, { expiresIn: '7d' });
+    const isProd = process.env.NODE_ENV === 'production';
 
     reply.setCookie('token', token, {
       path: '/',
       httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      sameSite: isProd ? 'none' : 'lax',
+      secure: isProd,
       maxAge: 60 * 60 * 24 * 7,
     });
 
