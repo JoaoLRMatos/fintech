@@ -30,8 +30,10 @@ await app.register(cors, {
   origin: (origin, cb) => {
     const allowed = process.env.FRONTEND_URL || 'http://localhost:5173';
     const allowList = allowed.split(',').map(s => s.trim());
-    // Permite requests sem origin (mobile, curl, Postman) e origins permitidas
-    if (!origin || allowList.includes(origin)) return cb(null, true);
+    // Permite requests sem origin (mobile, curl, Postman), origins permitidas
+    // e qualquer subdomínio onrender.com (deploys de produção).
+    const isOnRender = !!origin && /\.onrender\.com$/.test(new URL(origin).hostname);
+    if (!origin || allowList.includes(origin) || isOnRender) return cb(null, true);
     cb(new Error(`CORS: ${origin} não permitido`), false);
   },
   credentials: true,

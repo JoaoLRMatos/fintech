@@ -56,13 +56,28 @@ export async function telegramRoutes(app: FastifyInstance) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
 
-  // Polling apenas em desenvolvimento local (nunca em produção)
+  // O Render seta RENDER=true e RENDER_EXTERNAL_URL (a URL pública do serviço).
+  const isRender = !!process.env.RENDER;
+  const publicUrl = process.env.RENDER_EXTERNAL_URL || process.env.PUBLIC_URL;
+
+  // Long-polling SÓ em desenvolvimento local. Em produção dois processos puxando
+  // o mesmo bot (seu dev local + o Render) geram o erro 409 "Conflict: terminated
+  // by other getUpdates request". Por isso em produção usamos webhook, não polling.
   const usePolling = process.env.TELEGRAM_USE_POLLING === 'true'
-    && process.env.NODE_ENV !== 'production';
+    && process.env.NODE_ENV !== 'production'
+    && !isRender;
 
   if (token && usePolling) {
     deleteTelegramWebhook(token).catch(() => {});
     startPolling(token, app.log);
+  } else if (token && isRender && publicUrl) {
+    // Em produção: registra o webhook automaticamente apontando para esta instância.
+    // O Telegram passa a entregar as mensagens em POST /api/telegram/webhook,
+    // eliminando o polling (e o 409) sem deixar o bot mudo em produção.
+    const webhookUrl = `${publicUrl.replace(/\/$/, '')}/api/telegram/webhook`;
+    setTelegramWebhook(token, webhookUrl, webhookSecret)
+      .then(() => app.log.info({ webhookUrl }, 'Telegram: webhook registrado'))
+      .catch((err) => app.log.error(err, 'Telegram: falha ao registrar webhook'));
   }
 
   // ── Webhook: recebe mensagens do Telegram ──
