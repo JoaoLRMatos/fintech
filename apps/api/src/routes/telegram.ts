@@ -56,9 +56,11 @@ export async function telegramRoutes(app: FastifyInstance) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
 
-  // Auto-start polling when bot token is set and polling mode is enabled
-  if (token && process.env.TELEGRAM_USE_POLLING === 'true') {
-    // Delete any existing webhook so polling works
+  // Polling apenas em desenvolvimento local (nunca em produção)
+  const usePolling = process.env.TELEGRAM_USE_POLLING === 'true'
+    && process.env.NODE_ENV !== 'production';
+
+  if (token && usePolling) {
     deleteTelegramWebhook(token).catch(() => {});
     startPolling(token, app.log);
   }
