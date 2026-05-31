@@ -3,7 +3,7 @@ import { prisma } from './prisma.js';
 import { processWhatsAppMessage } from './processMessage.js';
 import { projectMonths, simulatePurchase } from './projectionEngine.js';
 import { computeSafeToSpend } from './insightsEngine.js';
-import { invoiceForPurchase, billWindow, currentPayableInvoice, fmtDate } from './creditCard.js';
+import { invoiceForPurchase, fmtDate } from './creditCard.js';
 
 const MONTH_NAMES = [
   'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
@@ -406,25 +406,29 @@ export async function handleIncomingMessage(
       await sendReply('❌ Não identifiquei o cartão. Cadastre seus cartões e tente: "paguei o cartão BB".');
       return { success: false };
     }
-    const inv = currentPayableInvoice(card, new Date());
-    const w = billWindow(card, inv.year, inv.month);
-    const txs = await prisma.transaction.findMany({
-      where: {
-        workspaceId: workspace.id,
-        creditCardId: card.id,
-        paidAt: null,
-        occurredAt: { gte: w.start, lte: w.end },
-      },
+    // Busca todas as despesas do cartão e filtra "não pagas" em JS
+    // (Prisma+MongoDB não casa paidAt:null com campo ausente).
+    const all = await prisma.transaction.findMany({
+      where: { workspaceId: workspace.id, creditCardId: card.id, type: 'EXPENSE' },
     });
+    const unpaid: any[] = all.filter((t: any) => !t.paidAt && t.dueDate);
 
-    if (txs.length === 0) {
-      await sendReply(`✅ Nenhuma fatura em aberto no *${card.name}* (fechamento ${fmtDate(w.end)}).`);
+    if (unpaid.length === 0) {
+      await sendReply(`✅ Nenhuma fatura em aberto no *${card.name}*.`);
       return { success: true, paid: 0 };
     }
 
-    const total = txs.reduce((s: number, t: any) => s + Number(t.amount), 0);
+    // Paga a fatura mais próxima (menor data de vencimento em aberto)
+    unpaid.sort((a: any, b: any) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+    const firstDue = new Date(unpaid[0].dueDate);
+    const invoice = unpaid.filter((t: any) => {
+      const d = new Date(t.dueDate);
+      return d.getFullYear() === firstDue.getFullYear() && d.getMonth() === firstDue.getMonth();
+    });
+
+    const total = invoice.reduce((s: number, t: any) => s + Number(t.amount), 0);
     await prisma.transaction.updateMany({
-      where: { id: { in: txs.map((t: any) => t.id) } },
+      where: { id: { in: invoice.map((t: any) => t.id) } },
       data: { paidAt: new Date() },
     });
     if (account) {
@@ -433,8 +437,8 @@ export async function handleIncomingMessage(
 
     await sendReply(
       `✅ Fatura do *${card.name}* paga!\n` +
-      `💰 Total: ${fmt(total)} (${txs.length} ${txs.length === 1 ? 'lançamento' : 'lançamentos'})\n` +
-      `📅 Vencimento: ${fmtDate(w.dueDate)}\n` +
+      `💰 Total: ${fmt(total)} (${invoice.length} ${invoice.length === 1 ? 'lançamento' : 'lançamentos'})\n` +
+      `📅 Vencimento: ${fmtDate(firstDue)}\n` +
       `🏦 Saldo da conta atualizado.`
     );
     return { success: true, paid: total };
@@ -541,11 +545,14 @@ export async function handleIncomingMessage(
     const monthLabel = `${MONTH_NAMES[m0]}/${year}`;
 
     // 1) Faturas de cartão que vencem nesse mês (ainda não pagas)
-    const creditTx = await prisma.transaction.findMany({
-      where: { workspaceId: workspace.id, creditCardId: { not: null }, paidAt: null, dueDate: { gte: start, lte: end } },
+    // Filtra paidAt em JS — Prisma+MongoDB não casa paidAt:null com campo ausente.
+    const creditTxRaw = await prisma.transaction.findMany({
+      where: { workspaceId: workspace.id, creditCardId: { not: null }, dueDate: { gte: start, lte: end } },
     });
     const byCard = new Map<string, number>();
-    for (const t of creditTx) {
+    for (const t of creditTxRaw) {
+      if (t.paidAt) continue;          // já paga
+      if (t.type !== 'EXPENSE') continue; // só o que se paga (ignora estorno/crédito)
       const k = t.creditCardId as string;
       byCard.set(k, (byCard.get(k) ?? 0) + Number(t.amount));
     }
@@ -580,9 +587,10 @@ export async function handleIncomingMessage(
     }));
 
     // 5) Parcelas (não-crédito) que caem no mês e ainda não foram pagas
-    const installmentTx = await prisma.transaction.findMany({
-      where: { workspaceId: workspace.id, type: 'EXPENSE', creditCardId: null, paidAt: null, installmentGroup: { not: null }, occurredAt: { gte: start, lte: end } },
+    const installmentTxRaw = await prisma.transaction.findMany({
+      where: { workspaceId: workspace.id, type: 'EXPENSE', creditCardId: null, installmentGroup: { not: null }, occurredAt: { gte: start, lte: end } },
     });
+    const installmentTx = installmentTxRaw.filter((t: any) => !t.paidAt);
 
     let total = 0;
     let msg = `📅 *A pagar em ${monthLabel}*\n`;

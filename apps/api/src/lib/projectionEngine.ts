@@ -135,7 +135,7 @@ export async function projectMonths(workspaceId: string, input: ProjectInput = {
         workspaceId,
         OR: [
           { occurredAt: { gte: rangeStart, lte: rangeEnd } },
-          { paymentMethod: 'credit', paidAt: null, dueDate: { gte: rangeStart, lte: rangeEnd } }
+          { paymentMethod: 'credit', paidAt: { isSet: false }, dueDate: { gte: rangeStart, lte: rangeEnd } }
         ]
       },
       include: { category: true }
