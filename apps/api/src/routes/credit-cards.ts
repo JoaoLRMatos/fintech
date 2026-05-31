@@ -9,19 +9,19 @@ export async function creditCardRoutes(app: FastifyInstance) {
   // LIST -- inclui limite usado, disponivel e proximo vencimento
   app.get('/api/credit-cards', async (request) => {
     const { workspaceId } = request.user as { workspaceId: string };
-    const [cards, usedGroups] = await Promise.all([
+    // groupBy nao e suportado no MongoDB pelo Prisma; usar findMany + agregacao JS
+    const [cards, unpaidCreditTxs] = await Promise.all([
       prisma.creditCard.findMany({ where: { workspaceId }, orderBy: { name: 'asc' } }),
-      prisma.transaction.groupBy({
-        by: ['creditCardId'],
+      prisma.transaction.findMany({
         where: { workspaceId, paymentMethod: 'credit', paidAt: null, creditCardId: { not: null } },
-        _sum: { amount: true },
+        select: { creditCardId: true, amount: true },
       }),
     ]);
 
     return cards.map(card => {
-      const used = usedGroups.find(g => g.creditCardId === card.id);
-      const usedAmount = Number(used?._sum.amount ?? 0);
-      // Converter Decimal do Prisma para number puro (evita problemas de serializacao JSON)
+      const usedAmount = unpaidCreditTxs
+        .filter(t => t.creditCardId === card.id)
+        .reduce((s, t) => s + Number(t.amount), 0);
       const limit = card.limit ? Number(card.limit) : null;
       const availableLimit = limit !== null ? Math.max(0, limit - usedAmount) : null;
       const next = nextUpcomingDueMonth(card);
