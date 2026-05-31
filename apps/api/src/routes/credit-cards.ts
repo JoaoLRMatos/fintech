@@ -21,9 +21,11 @@ export async function creditCardRoutes(app: FastifyInstance) {
     return cards.map(card => {
       const used = usedGroups.find(g => g.creditCardId === card.id);
       const usedAmount = Number(used?._sum.amount ?? 0);
-      const availableLimit = card.limit ? Math.max(0, card.limit - usedAmount) : null;
+      // Converter Decimal do Prisma para number puro (evita problemas de serializacao JSON)
+      const limit = card.limit ? Number(card.limit) : null;
+      const availableLimit = limit !== null ? Math.max(0, limit - usedAmount) : null;
       const next = nextUpcomingDueMonth(card);
-      return { ...card, usedAmount, availableLimit, nextDueMonth: next.month, nextDueYear: next.year, nextDueDate: next.dueDate };
+      return { ...card, limit, usedAmount, availableLimit, nextDueMonth: next.month, nextDueYear: next.year, nextDueDate: next.dueDate };
     });
   });
 
@@ -83,10 +85,14 @@ export async function creditCardRoutes(app: FastifyInstance) {
     const card = await prisma.creditCard.findFirst({ where: { id, workspaceId } });
     if (!card) throw new Error('Cartao nao encontrado.');
 
+    // Buscar por dueDate dentro do mes de vencimento (mais confiavel que janela por occurredAt)
+    const dueMonthStart = new Date(year, month - 1, 1);
+    const dueMonthEnd = new Date(year, month, 0, 23, 59, 59, 999); // ultimo dia do mes
+    // Calcular a janela de compras para exibir no subtitulo da fatura
     const { start, end, dueDate } = billWindowByDueMonth(card, year, month);
 
     const transactions = await prisma.transaction.findMany({
-      where: { workspaceId, creditCardId: id, occurredAt: { gte: start, lte: end } },
+      where: { workspaceId, creditCardId: id, dueDate: { gte: dueMonthStart, lte: dueMonthEnd } },
       include: { category: true },
       orderBy: { occurredAt: 'desc' },
     });
@@ -111,10 +117,12 @@ export async function creditCardRoutes(app: FastifyInstance) {
     const card = await prisma.creditCard.findFirst({ where: { id, workspaceId } });
     if (!card) throw new Error('Cartao nao encontrado.');
 
-    const { start, end, dueDate } = billWindowByDueMonth(card, year, month);
+    const dueMonthStart = new Date(year, month - 1, 1);
+    const dueMonthEnd = new Date(year, month, 0, 23, 59, 59, 999);
+    const { dueDate } = billWindowByDueMonth(card, year, month);
 
     const txs = await prisma.transaction.findMany({
-      where: { workspaceId, creditCardId: id, paidAt: null, occurredAt: { gte: start, lte: end } },
+      where: { workspaceId, creditCardId: id, paidAt: null, dueDate: { gte: dueMonthStart, lte: dueMonthEnd } },
     });
     if (txs.length === 0) return { success: true, paid: 0, count: 0, dueDate };
 

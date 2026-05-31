@@ -122,26 +122,17 @@ export function billWindowByDueMonth(card: CardCycleInput, dueYear: number, dueM
 }
 
 /**
- * Próximo vencimento da fatura a partir de uma data de referência.
- * Retorna o mês/ano de vencimento (não o de fechamento).
+ * Em qual fatura uma compra feita HOJE cairia — e quando ela vence.
+ * Usa invoiceForPurchase para calcular corretamente com base no closingDay.
+ * Ex.: BB (fecha dia 30, vence dia 10) — hoje 31/mai → fatura de jul/10.
  */
 export function nextUpcomingDueMonth(card: CardCycleInput, ref = new Date()): {
   year: number;
   month: number; // 1-12, mês do VENCIMENTO
   dueDate: Date;
 } {
-  const y = ref.getFullYear();
-  const m = ref.getMonth();
-
-  // Tenta o vencimento deste mês
-  const thisDue = makeDate(y, m, card.billingDay);
-  if (thisDue > ref) {
-    return { year: y, month: m + 1, dueDate: thisDue };
-  }
-
-  // Próximo mês
-  const nextDue = makeDate(y, m + 1, card.billingDay);
-  return { year: nextDue.getFullYear(), month: nextDue.getMonth() + 1, dueDate: nextDue };
+  const { dueDate } = invoiceForPurchase(card, ref);
+  return { year: dueDate.getFullYear(), month: dueDate.getMonth() + 1, dueDate };
 }
 
 export function fmtDate(d: Date): string {

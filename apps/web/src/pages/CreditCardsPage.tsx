@@ -15,15 +15,26 @@ const MONTHS = [
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
 ];
 
-/** Proximo mes de vencimento com base no billingDay do cartao */
+/**
+ * Em qual fatura uma compra feita HOJE cairia, com base no closingDay.
+ * Ex.: BB (fecha dia 30, vence dia 10) — hoje 31/mai → fatura de jul/10.
+ */
 function defaultBillMonth(card: any): { year: number; month: number } {
   const now = new Date();
+  const day = now.getDate();
+  const m = now.getMonth();   // 0-indexed
   const y = now.getFullYear();
-  const m = now.getMonth();
-  const thisDue = new Date(y, m, card.billingDay);
-  if (thisDue > now) return { year: y, month: m + 1 };
-  const next = new Date(y, m + 1, card.billingDay);
-  return { year: next.getFullYear(), month: next.getMonth() + 1 };
+
+  // Qual ciclo de fechamento a compra de hoje entra?
+  let closeM = m;
+  if (day > card.closingDay) closeM += 1; // passou do fechamento → proximo ciclo
+
+  // Qual mes de vencimento isso produz?
+  let dueM = closeM;
+  if (card.billingDay <= card.closingDay) dueM += 1; // vence no mes seguinte ao fechamento
+
+  const due = new Date(y, dueM, card.billingDay); // JS normaliza overflow automaticamente
+  return { year: due.getFullYear(), month: due.getMonth() + 1 };
 }
 
 export function CreditCardsPage() {
