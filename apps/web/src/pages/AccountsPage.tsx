@@ -42,16 +42,16 @@ export function AccountsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <h1 className="text-2xl font-bold">Contas</h1>
-        <button onClick={() => { setEditing(null); resetForm(); setShowForm(!showForm); }} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+        <button onClick={() => { setEditing(null); resetForm(); setShowForm(!showForm); }} className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
           <Plus className="h-4 w-4" /> Nova conta
         </button>
       </div>
 
       {showForm && (
-        <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
+        <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5 space-y-4">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs text-slate-400">Nome</label>
               <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required className={inputCls} placeholder="Ex: Nubank" />
@@ -72,15 +72,15 @@ export function AccountsPage() {
             )}
           </div>
           <div className="flex gap-3">
-            <button type="submit" className="rounded-lg bg-emerald-600 px-6 py-2 text-sm font-medium text-white hover:bg-emerald-500">{editing ? 'Salvar' : 'Criar'}</button>
-            <button type="button" onClick={() => { setShowForm(false); setEditing(null); }} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800">Cancelar</button>
+            <button type="submit" className="flex-1 sm:flex-none rounded-lg bg-emerald-600 px-6 py-2 text-sm font-medium text-white hover:bg-emerald-500">{editing ? 'Salvar' : 'Criar'}</button>
+            <button type="button" onClick={() => { setShowForm(false); setEditing(null); }} className="flex-1 sm:flex-none rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800 text-center">Cancelar</button>
           </div>
         </form>
       )}
 
-      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-semibold">Suas contas</h2>
+      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5">
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <h2 className="font-semibold text-lg">Suas contas</h2>
           <span className="text-sm text-slate-400">Total: <span className="font-semibold text-emerald-400">{fmt(total)}</span></span>
         </div>
 
@@ -89,23 +89,23 @@ export function AccountsPage() {
         ) : accounts?.length === 0 ? (
           <p className="text-sm text-slate-500">Nenhuma conta cadastrada.</p>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-3">
             {accounts?.map((a: any) => {
               const Icon = typeIcons[a.type] ?? Wallet;
               return (
-                <div key={a.id} className="flex items-center justify-between rounded-xl bg-slate-800/80 px-4 py-3">
+                <div key={a.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl bg-slate-800/80 px-4 py-3">
                   <div className="flex items-center gap-3">
-                    <Icon className="h-5 w-5 text-slate-400" />
+                    <Icon className="h-5 w-5 text-slate-400 shrink-0" />
                     <div>
-                      <p className="font-medium">{a.name}</p>
+                      <p className="font-medium text-slate-100">{a.name}</p>
                       <p className="text-xs text-slate-500">{a.type === 'bank' ? 'Banco' : a.type === 'cash' ? 'Dinheiro' : 'Cartão'}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center justify-between sm:justify-end gap-4 border-t border-slate-700/50 sm:border-0 pt-2 sm:pt-0">
                     <span className={`font-semibold ${Number(a.balance) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{fmt(Number(a.balance))}</span>
                     <div className="flex gap-1">
-                      <button onClick={() => startEdit(a)} className="rounded p-1 text-slate-400 hover:bg-slate-700 hover:text-slate-200"><Pencil className="h-3.5 w-3.5" /></button>
-                      <button onClick={() => { if (confirm(`Excluir "${a.name}"?`)) deleteMut.mutate(a.id); }} className="rounded p-1 text-slate-400 hover:bg-slate-700 hover:text-rose-400"><Trash2 className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => startEdit(a)} className="rounded p-1.5 text-slate-400 hover:bg-slate-700 hover:text-slate-200" aria-label="Editar"><Pencil className="h-4 w-4 sm:h-3.5 sm:w-3.5" /></button>
+                      <button onClick={() => { if (confirm(`Excluir "${a.name}"?`)) deleteMut.mutate(a.id); }} className="rounded p-1.5 text-slate-400 hover:bg-slate-700 hover:text-rose-400" aria-label="Excluir"><Trash2 className="h-4 w-4 sm:h-3.5 sm:w-3.5" /></button>
                     </div>
                   </div>
                 </div>

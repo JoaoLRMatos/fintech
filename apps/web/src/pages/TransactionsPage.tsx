@@ -71,17 +71,17 @@ export function TransactionsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <h1 className="text-2xl font-bold">Lançamentos</h1>
-        <button onClick={() => { setEditing(null); resetForm(); setShowForm(!showForm); }} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+        <button onClick={() => { setEditing(null); resetForm(); setShowForm(!showForm); }} className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
           <Plus className="h-4 w-4" /> Novo lançamento
         </button>
       </div>
 
       {showForm && (
-        <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
-          <h2 className="font-semibold">{editing ? 'Editar lançamento' : 'Novo lançamento'}</h2>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5 space-y-4">
+          <h2 className="font-semibold text-lg">{editing ? 'Editar lançamento' : 'Novo lançamento'}</h2>
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs text-slate-400">Tipo</label>
               <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} className={inputCls}>
@@ -139,15 +139,15 @@ export function TransactionsPage() {
             <input type="text" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className={inputCls} placeholder="Opcional" />
           </div>
           <div className="flex gap-3">
-            <button type="submit" disabled={createMut.isPending || updateMut.isPending} className="rounded-lg bg-emerald-600 px-6 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50">
+            <button type="submit" disabled={createMut.isPending || updateMut.isPending} className="flex-1 sm:flex-none rounded-lg bg-emerald-600 px-6 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50">
               {editing ? 'Salvar' : 'Criar'}
             </button>
-            <button type="button" onClick={() => { setShowForm(false); setEditing(null); }} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800">Cancelar</button>
+            <button type="button" onClick={() => { setShowForm(false); setEditing(null); }} className="flex-1 sm:flex-none rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800 text-center">Cancelar</button>
           </div>
         </form>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {['', 'EXPENSE', 'INCOME'].map(t => (
           <button key={t} onClick={() => { setTypeFilter(t); setPage(1); }} className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${typeFilter === t ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
             {t === '' ? 'Todos' : t === 'EXPENSE' ? 'Despesas' : 'Receitas'}
@@ -158,8 +158,9 @@ export function TransactionsPage() {
       {isLoading ? (
         <div className="flex h-32 items-center justify-center"><div className="h-6 w-6 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" /></div>
       ) : (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900">
-          <table className="w-full text-sm">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 overflow-hidden">
+          {/* Desktop Table */}
+          <table className="hidden md:table w-full text-sm">
             <thead>
               <tr className="border-b border-slate-800 text-left text-xs text-slate-500">
                 <th className="px-4 py-3">Data</th>
@@ -202,6 +203,50 @@ export function TransactionsPage() {
               ))}
             </tbody>
           </table>
+
+          {/* Mobile ListView */}
+          <div className="block md:hidden divide-y divide-slate-800/60">
+            {data?.data?.length === 0 && (
+              <div className="px-4 py-8 text-center text-slate-500 text-sm">Nenhum lançamento encontrado.</div>
+            )}
+            {data?.data?.map((tx: any) => (
+              <div key={tx.id} className="p-4 flex flex-col gap-2 hover:bg-slate-800/10">
+                <div className="flex justify-between items-start gap-2">
+                  <span className="font-semibold text-slate-100 text-sm line-clamp-2">{tx.description}</span>
+                  <span className={`text-sm font-semibold shrink-0 ${tx.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {tx.type === 'INCOME' ? '+' : '-'} {fmt(Number(tx.amount))}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <span>{new Date(tx.occurredAt).toLocaleDateString('pt-BR')}</span>
+                  <span>&middot;</span>
+                  {tx.category && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-slate-800 px-2 py-0.5 text-[10px]">
+                      <span className="h-1.5 w-1.5 rounded-full" style={{ background: tx.category.color ?? '#64748b' }} />
+                      {tx.category.name}
+                    </span>
+                  )}
+                  <span>&middot;</span>
+                  <span className="truncate max-w-[100px]">
+                    {tx.creditCardId
+                      ? `💳 ${creditCards?.find((c: any) => c.id === tx.creditCardId)?.name ?? 'Crédito'}`
+                      : (tx.account?.name ?? '—')}
+                  </span>
+                </div>
+                {tx.notes && (
+                  <p className="text-xs text-slate-400 italic line-clamp-1 mt-0.5">{tx.notes}</p>
+                )}
+                <div className="flex justify-end gap-2 border-t border-slate-800/30 pt-2 mt-1">
+                  <button onClick={() => startEdit(tx)} className="flex items-center gap-1.5 rounded bg-slate-800 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700">
+                    <Pencil className="h-3 w-3" /> Editar
+                  </button>
+                  <button onClick={() => { if (confirm('Excluir este lançamento?')) deleteMut.mutate(tx.id); }} className="flex items-center gap-1.5 rounded bg-slate-800/50 px-3 py-1.5 text-xs text-slate-400 hover:bg-rose-950/20 hover:text-rose-400">
+                    <Trash2 className="h-3 w-3" /> Excluir
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
 
           {data && data.total > 20 && (
             <div className="flex items-center justify-between border-t border-slate-800 px-4 py-3 text-xs text-slate-500">

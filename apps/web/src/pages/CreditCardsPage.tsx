@@ -111,11 +111,11 @@ export function CreditCardsPage() {
       limit: initial?.limit ? String(initial.limit) : '',
     });
     return (
-      <div className="rounded-2xl border border-slate-700 bg-slate-900 p-5 space-y-4">
-        <h2 className="font-semibold text-slate-100">{initial ? 'Editar cartao' : 'Novo cartao'}</h2>
-        <div className="grid gap-3 sm:grid-cols-2">
+      <div className="rounded-2xl border border-slate-700 bg-slate-900 p-4 sm:p-5 space-y-4">
+        <h2 className="font-semibold text-slate-100">{initial ? 'Editar cartão' : 'Novo cartão'}</h2>
+        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <label className="mb-1 block text-xs text-slate-400">Nome do cartao</label>
+            <label className="mb-1 block text-xs text-slate-400">Nome do cartão</label>
             <input className={inputCls} placeholder="Ex: Nubank, Itau Visa..." value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} />
           </div>
           <div>
@@ -128,7 +128,7 @@ export function CreditCardsPage() {
             <label className="mb-1 block text-xs text-slate-400">Dia de vencimento</label>
             <input className={inputCls} type="number" min={1} max={31} value={form.billingDay}
               onChange={e => setForm(p => ({ ...p, billingDay: Number(e.target.value) }))} />
-            <p className="mt-1 text-xs text-slate-500">Dia que voce paga a fatura</p>
+            <p className="mt-1 text-xs text-slate-500">Dia que você paga a fatura</p>
           </div>
           <div className="sm:col-span-2">
             <label className="mb-1 block text-xs text-slate-400">Limite (R$) &mdash; opcional</label>
@@ -150,11 +150,11 @@ export function CreditCardsPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Cartoes de Credito</h1>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <h1 className="text-2xl font-bold">Cartões de Crédito</h1>
         <button onClick={() => { setShowForm(true); setEditing(null); }}
-          className="flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600">
-          <Plus className="h-4 w-4" /> Novo cartao
+          className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-emerald-500 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600">
+          <Plus className="h-4 w-4" /> Novo cartão
         </button>
       </div>
 
@@ -181,25 +181,25 @@ export function CreditCardsPage() {
             <div
               key={card.id}
               onClick={() => selectCard(card.id)}
-              className={`cursor-pointer rounded-2xl border p-5 transition-all space-y-3
+              className={`cursor-pointer rounded-2xl border p-4 sm:p-5 transition-all space-y-3
                 ${isSelected ? 'border-emerald-500 bg-emerald-500/5 shadow-lg shadow-emerald-500/10' : 'border-slate-800 bg-slate-900 hover:border-slate-700'}`}
             >
               {/* Header */}
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${isSelected ? 'bg-emerald-500/20' : 'bg-slate-800'}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl shrink-0 ${isSelected ? 'bg-emerald-500/20' : 'bg-slate-800'}`}>
                     <CreditCard className={`h-5 w-5 ${isSelected ? 'text-emerald-400' : 'text-slate-400'}`} />
                   </div>
-                  <div>
-                    <p className="font-semibold text-slate-100">{card.name}</p>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-slate-100 truncate">{card.name}</p>
                     <p className="text-xs text-slate-500">Fecha dia {card.closingDay} &middot; Vence dia {card.billingDay}</p>
                   </div>
                 </div>
-                <div className="flex gap-1" onClick={e => e.stopPropagation()}>
-                  <button onClick={() => { setEditing(card); setShowForm(false); }} className="rounded p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-200">
+                <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                  <button onClick={() => { setEditing(card); setShowForm(false); }} className="rounded p-1.5 text-slate-500 hover:bg-slate-800 hover:text-slate-200" aria-label="Editar">
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
-                  <button onClick={() => { if (window.confirm(`Excluir o cartao "${card.name}"?`)) deleteMut.mutate(card.id); }} className="rounded p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-400">
+                  <button onClick={() => { if (window.confirm(`Excluir o cartao "${card.name}"?`)) deleteMut.mutate(card.id); }} className="rounded p-1.5 text-slate-500 hover:bg-rose-500/10 hover:text-rose-400" aria-label="Excluir">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
@@ -208,12 +208,12 @@ export function CreditCardsPage() {
               {/* Barra de limite */}
               {card.limit ? (
                 <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs">
-                    <span className={isOverLimit ? 'text-rose-400' : 'text-slate-400'}>
+                  <div className="flex justify-between text-xs gap-2">
+                    <span className={`truncate ${isOverLimit ? 'text-rose-400' : 'text-slate-400'}`}>
                       {fmt(card.usedAmount)} usado
                     </span>
-                    <span className={isOverLimit ? 'text-rose-400 font-semibold' : 'text-slate-300 font-medium'}>
-                      {isOverLimit ? 'Limite excedido' : `${fmt(card.availableLimit)} disponivel`}
+                    <span className={`shrink-0 ${isOverLimit ? 'text-rose-400 font-semibold' : 'text-slate-300 font-medium'}`}>
+                      {isOverLimit ? 'Limite excedido' : `${fmt(card.availableLimit)} disponível`}
                     </span>
                   </div>
                   <div className="h-2 w-full rounded-full bg-slate-800 overflow-hidden">
@@ -232,12 +232,12 @@ export function CreditCardsPage() {
               )}
 
               {/* Proximo vencimento */}
-              <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs
+              <div className={`flex items-start gap-2 rounded-lg px-3 py-2 text-xs
                 ${card.usedAmount > 0 ? 'bg-amber-500/10 text-amber-300' : 'bg-slate-800/80 text-slate-500'}`}>
-                <Calendar className="h-3.5 w-3.5 shrink-0" />
-                <span>
-                  Proximo vencimento: <strong>{card.billingDay}/{String(card.nextDueMonth).padStart(2, '0')}/{card.nextDueYear}</strong>
-                  {card.usedAmount > 0 && <span className="ml-1">&middot; {fmt(card.usedAmount)} a pagar</span>}
+                <Calendar className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span className="leading-relaxed">
+                  Próximo vencimento: <strong>{card.billingDay}/{String(card.nextDueMonth).padStart(2, '0')}/{card.nextDueYear}</strong>
+                  {card.usedAmount > 0 && <span className="block sm:inline sm:ml-1">&middot; {fmt(card.usedAmount)} a pagar</span>}
                 </span>
               </div>
             </div>
@@ -293,21 +293,21 @@ export function CreditCardsPage() {
 
           {/* Total da fatura */}
           {bill && (
-            <div className="px-5 py-4 space-y-4">
-              <div className={`flex items-center justify-between rounded-xl px-4 py-3 ${bill.isPaid ? 'bg-emerald-500/10' : bill.total > 0 ? 'bg-rose-500/10' : 'bg-slate-800/60'}`}>
+            <div className="px-4 sm:px-5 py-4 space-y-4">
+              <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl px-4 py-3 ${bill.isPaid ? 'bg-emerald-500/10' : bill.total > 0 ? 'bg-rose-500/10' : 'bg-slate-800/60'}`}>
                 <div>
                   <p className="text-xs text-slate-400 mb-0.5">Total da fatura</p>
-                  <strong className={`text-2xl font-bold ${bill.isPaid ? 'text-emerald-400' : bill.total > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
+                  <strong className={`text-xl sm:text-2xl font-bold ${bill.isPaid ? 'text-emerald-400' : bill.total > 0 ? 'text-rose-400' : 'text-slate-400'}`}>
                     {fmt(bill.total)}
                   </strong>
                 </div>
                 {bill.isPaid && (
-                  <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1.5 text-xs font-medium text-emerald-400">
+                  <div className="flex w-fit items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1.5 text-xs font-medium text-emerald-400">
                     <Check className="h-3.5 w-3.5" /> Paga
                   </div>
                 )}
                 {!bill.isPaid && bill.total > 0 && (
-                  <div className="flex items-center gap-1.5 rounded-full bg-rose-500/20 px-3 py-1.5 text-xs font-medium text-rose-400">
+                  <div className="flex w-fit items-center gap-1.5 rounded-full bg-rose-500/20 px-3 py-1.5 text-xs font-medium text-rose-400">
                     <AlertTriangle className="h-3.5 w-3.5" /> Em aberto
                   </div>
                 )}

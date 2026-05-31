@@ -86,16 +86,16 @@ export function WhatsAppPage() {
       <h1 className="text-2xl font-bold">WhatsApp</h1>
 
       {/* ── Status Card ── */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-        <div className="flex items-center justify-between">
+      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             {connected ? (
-              <Wifi className="h-5 w-5 text-emerald-400" />
+              <Wifi className="h-5 w-5 text-emerald-400 shrink-0" />
             ) : (
-              <WifiOff className="h-5 w-5 text-rose-400" />
+              <WifiOff className="h-5 w-5 text-rose-400 shrink-0" />
             )}
             <div>
-              <p className="font-medium">{connected ? 'Conectado' : 'Desconectado'}</p>
+              <p className="font-medium text-slate-100">{connected ? 'Conectado' : 'Desconectado'}</p>
               <p className="text-xs text-slate-500">Cliente: {CLIENT_ID}</p>
             </div>
           </div>
@@ -103,7 +103,7 @@ export function WhatsAppPage() {
             <button
               onClick={() => disconnectMut.mutate()}
               disabled={disconnectMut.isPending}
-              className="flex items-center gap-2 rounded-lg border border-rose-800 px-3 py-2 text-sm text-rose-400 hover:bg-rose-500/10"
+              className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg border border-rose-800 px-3 py-2 text-sm text-rose-400 hover:bg-rose-500/10"
             >
               <LogOut className="h-4 w-4" />
               Desconectar
@@ -113,19 +113,19 @@ export function WhatsAppPage() {
       </div>
 
       {/* ── Provider Selector ── */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
+      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5 space-y-4">
         <div className="flex items-center gap-2">
-          <Radio className="h-5 w-5 text-emerald-400" />
-          <h2 className="text-lg font-semibold">Canal de envio</h2>
+          <Radio className="h-5 w-5 text-emerald-400 shrink-0" />
+          <h2 className="text-lg font-semibold text-slate-100">Canal de envio</h2>
         </div>
         <p className="text-sm text-slate-400">
           Escolha por onde o bot recebe e responde as mensagens do WhatsApp.
         </p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button
             onClick={() => providerMut.mutate('baileys')}
             disabled={providerMut.isPending}
-            className={`flex flex-col items-center gap-2 rounded-xl border p-4 transition-colors ${
+            className={`flex flex-col items-center gap-2 rounded-xl border p-4 transition-colors text-center ${
               activeProvider === 'baileys'
                 ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400'
                 : 'border-slate-700 text-slate-400 hover:border-slate-600'
@@ -138,7 +138,7 @@ export function WhatsAppPage() {
           <button
             onClick={() => providerMut.mutate('twilio')}
             disabled={providerMut.isPending || !providerData?.twilioConfigured}
-            className={`flex flex-col items-center gap-2 rounded-xl border p-4 transition-colors ${
+            className={`flex flex-col items-center gap-2 rounded-xl border p-4 transition-colors text-center ${
               activeProvider === 'twilio'
                 ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400'
                 : 'border-slate-700 text-slate-400 hover:border-slate-600'
@@ -158,7 +158,7 @@ export function WhatsAppPage() {
             <p className="text-xs text-amber-400">
               <strong>Twilio ativo.</strong> Configure a URL de webhook no painel do Twilio:
             </p>
-            <code className="mt-1 block rounded bg-slate-800 px-2 py-1 text-xs text-slate-300">
+            <code className="mt-1 block rounded bg-slate-800 px-2 py-1 text-xs text-slate-300 break-all">
               {window.location.origin.replace('5173', '3333')}/api/whatsapp/twilio-webhook
             </code>
             <p className="mt-1 text-xs text-slate-500">
@@ -252,7 +252,7 @@ export function WhatsAppPage() {
               <button
                 onClick={() => pairMut.mutate()}
                 disabled={!phone || pairMut.isPending}
-                className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
               >
                 {pairMut.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                 Gerar código
@@ -263,7 +263,7 @@ export function WhatsAppPage() {
                   <p className="text-xs text-slate-400 mb-2">
                     Digite este código no WhatsApp &gt; Aparelhos conectados &gt; Conectar com número
                   </p>
-                  <p className="font-mono text-3xl font-bold tracking-[0.3em] text-emerald-400">
+                  <p className="font-mono text-xl sm:text-3xl font-bold tracking-[0.2em] sm:tracking-[0.3em] text-emerald-400 break-words">
                     {pairingCode}
                   </p>
                 </div>
@@ -278,15 +278,15 @@ export function WhatsAppPage() {
       )}
 
       {/* ── Group Name Config ── */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
+      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5 space-y-4">
         <div className="flex items-center gap-2">
-          <Hash className="h-5 w-5 text-emerald-400" />
-          <h2 className="text-lg font-semibold">Grupo do WhatsApp</h2>
+          <Hash className="h-5 w-5 text-emerald-400 shrink-0" />
+          <h2 className="text-lg font-semibold text-slate-100">Grupo do WhatsApp</h2>
         </div>
         <p className="text-sm text-slate-400">
           Nome do grupo onde o bot escuta as mensagens. Deixe vazio para escutar DMs.
         </p>
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
           <input
             type="text"
             value={groupName}
@@ -297,7 +297,7 @@ export function WhatsAppPage() {
           <button
             onClick={() => groupMut.mutate(groupName)}
             disabled={groupMut.isPending}
-            className="flex shrink-0 items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+            className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
           >
             {groupMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             Salvar

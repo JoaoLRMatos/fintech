@@ -28,56 +28,60 @@ export function DashboardPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Dashboard</h1>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map(({ label, value, color, icon: Icon }) => (
-          <div key={label} className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-lg shadow-slate-950/30">
+          <div key={label} className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5 shadow-lg shadow-slate-950/30">
             <div className="mb-3 flex items-center justify-between">
-              <span className="text-sm text-slate-400">{label}</span>
+              <span className="text-xs sm:text-sm text-slate-400">{label}</span>
               <Icon className={`h-5 w-5 ${color}`} />
             </div>
-            <strong className="text-2xl">{value}</strong>
+            <strong className="text-xl sm:text-2xl">{value}</strong>
           </div>
         ))}
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-[1.4fr,0.6fr]">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-          <h2 className="mb-4 text-lg font-semibold">Evolução mensal</h2>
+      <section className="grid gap-6 grid-cols-1 lg:grid-cols-[1.4fr,0.6fr]">
+        <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5">
+          <h2 className="mb-4 text-base sm:text-lg font-semibold">Evolução mensal</h2>
           {monthly && monthly.length > 0 ? (
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={monthly}>
-                <XAxis dataKey="month" stroke="#64748b" fontSize={12} />
-                <YAxis stroke="#64748b" fontSize={12} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v: number) => fmt(v)} contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#e2e8f0' }} />
-                <Bar dataKey="income" name="Receitas" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="expense" name="Despesas" fill="#ef4444" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <div className="h-[280px] w-full min-w-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={monthly} margin={{ left: -10, right: 10 }}>
+                  <XAxis dataKey="month" stroke="#64748b" fontSize={11} />
+                  <YAxis stroke="#64748b" fontSize={11} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v: number) => fmt(v)} contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#e2e8f0' }} />
+                  <Bar dataKey="income" name="Receitas" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="expense" name="Despesas" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           ) : (
             <p className="text-sm text-slate-500">Nenhum dado ainda. Crie lançamentos para ver os gráficos.</p>
           )}
         </div>
 
-        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-          <h2 className="mb-4 text-lg font-semibold">Top categorias</h2>
+        <div className="min-w-0 rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5">
+          <h2 className="mb-4 text-base sm:text-lg font-semibold">Top categorias</h2>
           {summary?.topCategories?.length > 0 ? (
             <>
-              <ResponsiveContainer width="100%" height={180}>
-                <PieChart>
-                  <Pie data={summary.topCategories} dataKey="total" nameKey="name" cx="50%" cy="50%" innerRadius={40} outerRadius={70} paddingAngle={3}>
-                    {summary.topCategories.map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={(v: number) => fmt(v)} contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#e2e8f0' }} />
-                </PieChart>
-              </ResponsiveContainer>
+              <div className="h-[180px] w-full min-w-0">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={summary.topCategories} dataKey="total" nameKey="name" cx="50%" cy="50%" innerRadius={40} outerRadius={70} paddingAngle={3}>
+                      {summary.topCategories.map((_: any, i: number) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip formatter={(v: number) => fmt(v)} contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#e2e8f0' }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
               <div className="mt-2 space-y-1">
                 {summary.topCategories.map((c: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between text-sm">
+                  <div key={i} className="flex items-center justify-between text-xs sm:text-sm">
                     <div className="flex items-center gap-2">
                       <span className="h-2.5 w-2.5 rounded-full" style={{ background: c.color }} />
-                      <span className="text-slate-300">{c.name}</span>
+                      <span className="text-slate-300 truncate max-w-[120px] sm:max-w-none">{c.name}</span>
                     </div>
-                    <span className="text-slate-400">{fmt(c.total)}</span>
+                    <span className="text-slate-400 font-medium">{fmt(c.total)}</span>
                   </div>
                 ))}
               </div>

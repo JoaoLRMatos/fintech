@@ -50,16 +50,16 @@ export function RecurringPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <h1 className="text-2xl font-bold">Recorrentes</h1>
-        <button onClick={() => { resetForm(); setShowForm(!showForm); }} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+        <button onClick={() => { resetForm(); setShowForm(!showForm); }} className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 font-medium">
           <Plus className="h-4 w-4" /> Nova regra
         </button>
       </div>
 
       {showForm && (
-        <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5 space-y-4">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className="mb-1 block text-xs text-slate-400">Descrição</label>
               <input type="text" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} required className={inputCls} placeholder="Ex: Netflix" />
@@ -85,17 +85,17 @@ export function RecurringPage() {
               </select>
             </div>
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs text-slate-400">Próximo vencimento</label>
               <input type="date" value={form.nextDueDate} onChange={e => setForm(f => ({ ...f, nextDueDate: e.target.value }))} required className={inputCls} />
             </div>
           </div>
           <div className="flex gap-2">
-            <button type="submit" disabled={createMut.isPending} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50">
+            <button type="submit" disabled={createMut.isPending} className="flex-1 sm:flex-none rounded-lg bg-emerald-600 px-6 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50 text-center">
               {createMut.isPending ? 'Salvando...' : 'Salvar'}
             </button>
-            <button type="button" onClick={() => setShowForm(false)} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800">Cancelar</button>
+            <button type="button" onClick={() => setShowForm(false)} className="flex-1 sm:flex-none rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800 text-center font-medium">Cancelar</button>
           </div>
         </form>
       )}
@@ -111,40 +111,43 @@ export function RecurringPage() {
       ) : (
         <div className="space-y-3">
           {rules.map((r: any) => (
-            <div key={r.id} className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-900 p-4">
-              <div className="flex items-center gap-4">
-                <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${r.type === 'INCOME' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
+            <div key={r.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 rounded-2xl border border-slate-800 bg-slate-900 p-4">
+              <div className="flex items-start gap-4 min-w-0">
+                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-800 ${r.type === 'INCOME' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}>
                   {r.type === 'INCOME' ? <Play className="h-5 w-5" /> : <Repeat className="h-5 w-5" />}
                 </div>
-                <div>
-                  <p className="font-medium">{r.description}</p>
-                  <div className="flex items-center gap-3 text-xs text-slate-500">
-                    <span>{freqLabels[r.frequency] || r.frequency}</span>
+                <div className="min-w-0">
+                  <p className="font-medium text-slate-100 truncate">{r.description}</p>
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-slate-500 mt-1">
+                    <span className="font-medium bg-slate-800 px-1.5 py-0.5 rounded text-[10px] text-slate-400 uppercase">{freqLabels[r.frequency] || r.frequency}</span>
                     <span className="flex items-center gap-1">
-                      <CalendarClock className="h-3 w-3" />
+                      <CalendarClock className="h-3 w-3 text-slate-500" />
                       Próx: {new Date(r.nextDueDate).toLocaleDateString('pt-BR')}
                     </span>
-                    {!r.active && <span className="rounded bg-yellow-500/10 px-1.5 py-0.5 text-yellow-400">Pausado</span>}
+                    {!r.active && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400 uppercase tracking-wider">Pausado</span>}
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <span className={`text-lg font-semibold ${r.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
+              <div className="flex items-center justify-between sm:justify-end gap-3 border-t border-slate-800/40 sm:border-0 pt-2 sm:pt-0 shrink-0">
+                <span className={`text-base sm:text-lg font-semibold ${r.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
                   {r.type === 'INCOME' ? '+' : '-'}{fmt(Number(r.amount))}
                 </span>
-                <button
-                  onClick={() => updateMut.mutate({ id: r.id, active: !r.active })}
-                  className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-                  title={r.active ? 'Pausar' : 'Ativar'}
-                >
-                  {r.active ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                </button>
-                <button
-                  onClick={() => { if (confirm('Excluir esta regra?')) deleteMut.mutate(r.id); }}
-                  className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-rose-400"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => updateMut.mutate({ id: r.id, active: !r.active })}
+                    className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                    title={r.active ? 'Pausar/Ativar' : 'Ativar/Pausar'}
+                  >
+                    {r.active ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                  </button>
+                  <button
+                    onClick={() => { if (confirm('Excluir esta regra?')) deleteMut.mutate(r.id); }}
+                    className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-rose-400"
+                    aria-label="Excluir"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             </div>
           ))}

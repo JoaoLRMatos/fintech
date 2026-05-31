@@ -73,7 +73,7 @@ export function ImportPage() {
       <h1 className="text-2xl font-bold">Importar Planilha</h1>
 
       {/* Steps indicator */}
-      <div className="flex items-center gap-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
         {['Upload', 'Revisão', 'Concluído'].map((s, i) => {
           const current = ['upload', 'preview', 'done'].indexOf(step);
           return (
@@ -156,45 +156,62 @@ export function ImportPage() {
           )}
 
           {/* Account selector */}
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <label className="text-sm text-slate-400 whitespace-nowrap">Vincular à conta:</label>
-            <select value={accountId} onChange={e => setAccountId(e.target.value)} className={inputCls}>
-              <option value="">Sem vínculo</option>
-              {accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-            <span className="text-xs text-slate-500">(opcional — atualiza saldo)</span>
+            <div className="flex items-center gap-2">
+              <select value={accountId} onChange={e => setAccountId(e.target.value)} className={inputCls}>
+                <option value="">Sem vínculo</option>
+                {accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+              <span className="text-xs text-slate-500">(opcional — atualiza saldo)</span>
+            </div>
           </div>
 
-          {/* Rows table — mostra preview (20 primeiras), mas confirma todas */}
+          {/* Rows list/table */}
           <div className="rounded-2xl border border-slate-800 bg-slate-900 overflow-hidden">
-            <div className="grid grid-cols-[auto,1fr,auto,auto,auto] gap-0 text-xs text-slate-500 px-4 py-2 border-b border-slate-800 font-medium">
-              <span className="pr-4">Data</span>
+            <div className="hidden sm:grid sm:grid-cols-[90px,1fr,100px,100px,32px] gap-2 text-xs text-slate-500 px-4 py-2 border-b border-slate-800 font-medium">
+              <span>Data</span>
               <span>Descrição</span>
-              <span className="px-4">Valor</span>
-              <span className="px-4">Tipo</span>
+              <span>Valor</span>
+              <span>Tipo</span>
               <span></span>
             </div>
-            <div className="max-h-96 overflow-y-auto">
+            <div className="max-h-96 overflow-y-auto divide-y divide-slate-800/40">
               {rows.slice(0, 20).map((row, idx) => (
-                <div key={row.rowIndex} className="grid grid-cols-[auto,1fr,auto,auto,auto] items-center gap-0 px-4 py-2.5 border-b border-slate-800/60 last:border-0 hover:bg-slate-800/30">
-                  <span className="pr-4 text-xs text-slate-500 whitespace-nowrap">
-                    {row.date ? new Date(row.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—'}
-                  </span>
-                  <span className="text-sm text-slate-200 truncate">{row.description}</span>
-                  <span className="px-4 text-sm font-medium">{fmt(row.amount)}</span>
-                  <button
-                    onClick={() => toggleType(idx)}
-                    className={`px-3 py-0.5 rounded-full text-xs font-medium mx-2 ${row.type === 'INCOME' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}
-                  >
-                    {row.type === 'INCOME' ? 'Entrada' : 'Saída'}
-                  </button>
-                  <button onClick={() => removeRow(idx)} className="text-slate-600 hover:text-rose-400">
-                    <X className="h-3.5 w-3.5" />
+                <div key={row.rowIndex} className="flex flex-col sm:grid sm:grid-cols-[90px,1fr,100px,100px,32px] sm:items-center gap-2 sm:gap-2 px-4 py-3 sm:py-2.5 hover:bg-slate-800/30 transition-colors">
+                  <div className="flex items-center justify-between sm:block">
+                    <span className="text-xs text-slate-500 font-medium sm:font-normal">
+                      {row.date ? new Date(row.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—'}
+                    </span>
+                    <button onClick={() => removeRow(idx)} className="sm:hidden text-slate-500 hover:text-rose-400 p-1" aria-label="Remover">
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                  
+                  <span className="text-sm font-medium sm:font-normal text-slate-200 truncate">{row.description}</span>
+                  
+                  <div className="flex items-center justify-between sm:block pt-1 sm:pt-0 border-t border-slate-800/30 sm:border-t-0">
+                    <span className="sm:hidden text-xs text-slate-500 font-medium">Valor:</span>
+                    <span className="text-sm font-semibold text-slate-100 sm:text-slate-200">{fmt(row.amount)}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between sm:block pt-1 sm:pt-0">
+                    <span className="sm:hidden text-xs text-slate-500 font-medium flex items-center gap-1">Tipo: <span className="text-[10px] font-normal text-slate-600">(toque p/ mudar)</span></span>
+                    <button
+                      onClick={() => toggleType(idx)}
+                      className={`px-3 py-0.5 rounded-full text-xs font-medium ${row.type === 'INCOME' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}
+                    >
+                      {row.type === 'INCOME' ? 'Entrada' : 'Saída'}
+                    </button>
+                  </div>
+
+                  <button onClick={() => removeRow(idx)} className="hidden sm:block text-slate-600 hover:text-rose-400 ml-auto p-1" aria-label="Remover">
+                    <X className="h-4 w-4" />
                   </button>
                 </div>
               ))}
               {rows.length > 20 && (
-                <div className="px-4 py-2 text-xs text-slate-500 text-center border-t border-slate-800">
+                <div className="px-4 py-2.5 text-xs text-slate-500 text-center border-t border-slate-800">
                   + {rows.length - 20} linhas adicionais não exibidas (todas serão importadas)
                 </div>
               )}
@@ -202,7 +219,7 @@ export function ImportPage() {
           </div>
 
           {/* Summary */}
-          <div className="flex gap-4 text-sm">
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 text-sm font-medium">
             <span className="text-emerald-400">
               Entradas: {fmt(rows.filter(r => r.type === 'INCOME').reduce((s, r) => s + r.amount, 0))}
             </span>
@@ -211,14 +228,14 @@ export function ImportPage() {
             </span>
           </div>
 
-          <div className="flex gap-3">
-            <button onClick={reset} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button onClick={reset} className="w-full sm:w-auto rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800 text-center">
               Cancelar
             </button>
             <button
               disabled={rows.length === 0 || confirmMut.isPending}
               onClick={() => confirmMut.mutate()}
-              className="flex items-center gap-2 rounded-lg bg-emerald-500 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
+              className="w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg bg-emerald-500 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
             >
               <Upload className="h-4 w-4" />
               {confirmMut.isPending ? 'Importando...' : `Importar ${rows.length} lançamentos`}

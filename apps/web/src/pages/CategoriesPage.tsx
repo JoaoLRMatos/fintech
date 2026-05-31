@@ -38,16 +38,16 @@ export function CategoriesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <h1 className="text-2xl font-bold">Categorias</h1>
-        <button onClick={() => { setEditing(null); resetForm(); setShowForm(!showForm); }} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+        <button onClick={() => { setEditing(null); resetForm(); setShowForm(!showForm); }} className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
           <Plus className="h-4 w-4" /> Nova categoria
         </button>
       </div>
 
       {showForm && (
-        <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-800 bg-slate-900 p-5 space-y-4">
-          <div className="grid gap-4 sm:grid-cols-3">
+        <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5 space-y-4">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-xs text-slate-400">Nome</label>
               <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required className={inputCls} />
@@ -67,8 +67,8 @@ export function CategoriesPage() {
             </div>
           </div>
           <div className="flex gap-3">
-            <button type="submit" className="rounded-lg bg-emerald-600 px-6 py-2 text-sm font-medium text-white hover:bg-emerald-500">{editing ? 'Salvar' : 'Criar'}</button>
-            <button type="button" onClick={() => { setShowForm(false); setEditing(null); }} className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800">Cancelar</button>
+            <button type="submit" className="flex-1 sm:flex-none rounded-lg bg-emerald-600 px-6 py-2 text-sm font-medium text-white hover:bg-emerald-500">{editing ? 'Salvar' : 'Criar'}</button>
+            <button type="button" onClick={() => { setShowForm(false); setEditing(null); }} className="flex-1 sm:flex-none rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800 text-center">Cancelar</button>
           </div>
         </form>
       )}
@@ -76,21 +76,21 @@ export function CategoriesPage() {
       {isLoading ? (
         <div className="flex h-32 items-center justify-center"><div className="h-6 w-6 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" /></div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
           {[{ title: 'Despesas', items: expenses }, { title: 'Receitas', items: incomes }].map(({ title, items }) => (
-            <div key={title} className="rounded-2xl border border-slate-800 bg-slate-900 p-5">
-              <h2 className="mb-4 font-semibold">{title}</h2>
+            <div key={title} className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5">
+              <h2 className="mb-4 font-semibold text-lg">{title}</h2>
               {items.length === 0 ? <p className="text-sm text-slate-500">Nenhuma categoria.</p> : (
                 <div className="space-y-2">
                   {items.map((c: any) => (
-                    <div key={c.id} className="flex items-center justify-between rounded-xl bg-slate-800/80 px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <span className="h-3 w-3 rounded-full" style={{ background: c.color ?? '#64748b' }} />
-                        <span className="font-medium">{c.name}</span>
+                    <div key={c.id} className="flex items-center justify-between gap-3 rounded-xl bg-slate-800/80 px-4 py-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <span className="h-3 w-3 rounded-full shrink-0" style={{ background: c.color ?? '#64748b' }} />
+                        <span className="font-medium truncate text-slate-100">{c.name}</span>
                       </div>
-                      <div className="flex gap-1">
-                        <button onClick={() => startEdit(c)} className="rounded p-1 text-slate-400 hover:bg-slate-700 hover:text-slate-200"><Pencil className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => { if (confirm(`Excluir "${c.name}"?`)) deleteMut.mutate(c.id); }} className="rounded p-1 text-slate-400 hover:bg-slate-700 hover:text-rose-400"><Trash2 className="h-3.5 w-3.5" /></button>
+                      <div className="flex gap-1 shrink-0">
+                        <button onClick={() => startEdit(c)} className="rounded p-1.5 text-slate-400 hover:bg-slate-700 hover:text-slate-200" aria-label="Editar"><Pencil className="h-4 w-4 sm:h-3.5 sm:w-3.5" /></button>
+                        <button onClick={() => { if (confirm(`Excluir "${c.name}"?`)) deleteMut.mutate(c.id); }} className="rounded p-1.5 text-slate-400 hover:bg-slate-700 hover:text-rose-400" aria-label="Excluir"><Trash2 className="h-4 w-4 sm:h-3.5 sm:w-3.5" /></button>
                       </div>
                     </div>
                   ))}
