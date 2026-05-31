@@ -50,7 +50,7 @@ export function CreditCardsPage() {
   });
 
   const activeCard = cards.find((c: any) => c.id === selectedCard);
-  const activeBillMonth = billMonth ?? (activeCard ? defaultBillMonth(activeCard) : null);
+  const activeBillMonth = billMonth ?? (activeCard ? (activeCard.nextDueMonth ? { year: activeCard.nextDueYear, month: activeCard.nextDueMonth } : defaultBillMonth(activeCard)) : null);
 
   const { data: bill } = useQuery({
     queryKey: ['credit-card-bill', selectedCard, activeBillMonth?.year, activeBillMonth?.month],
@@ -62,7 +62,7 @@ export function CreditCardsPage() {
     if (selectedCard === id) { setSelectedCard(null); setBillMonth(null); return; }
     const card = cards.find((c: any) => c.id === id);
     setSelectedCard(id);
-    setBillMonth(card ? defaultBillMonth(card) : null);
+    setBillMonth(card ? (card.nextDueMonth ? { year: card.nextDueYear, month: card.nextDueMonth } : defaultBillMonth(card)) : null);
   }
 
   const createMut = useMutation({

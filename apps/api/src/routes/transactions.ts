@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
+import { invoiceForPurchase } from '../lib/creditCard.js';
 
 export async function transactionRoutes(app: FastifyInstance) {
   app.addHook('preHandler', app.authenticate);
@@ -57,11 +58,20 @@ export async function transactionRoutes(app: FastifyInstance) {
     }).parse(request.body);
 
     const isCredit = body.paymentMethod === 'credit';
+    let dueDate: Date | null = null;
+    if (isCredit && body.creditCardId) {
+      const card = await prisma.creditCard.findFirst({ where: { id: body.creditCardId, workspaceId } });
+      if (card) {
+        const cycle = invoiceForPurchase(card, body.occurredAt);
+        dueDate = cycle.dueDate;
+      }
+    }
 
     const tx = await prisma.transaction.create({
       data: {
         ...body,
         workspaceId,
+        dueDate,
         // Crédito: não vincula à conta corrente
         accountId: isCredit ? null : (body.accountId ?? undefined),
       },
@@ -94,6 +104,25 @@ export async function transactionRoutes(app: FastifyInstance) {
     const existing = await prisma.transaction.findFirst({ where: { id, workspaceId } });
     if (!existing) throw new Error('Transação não encontrada.');
 
+    const isCredit = (body.paymentMethod !== undefined ? body.paymentMethod : existing.paymentMethod) === 'credit';
+    const cardId = body.creditCardId !== undefined ? body.creditCardId : existing.creditCardId;
+    const occurredAt = body.occurredAt !== undefined ? body.occurredAt : existing.occurredAt;
+
+    let dueDate = existing.dueDate;
+    if (body.paymentMethod !== undefined || body.creditCardId !== undefined || body.occurredAt !== undefined) {
+      if (isCredit && cardId) {
+        const card = await prisma.creditCard.findFirst({ where: { id: cardId, workspaceId } });
+        if (card) {
+          const cycle = invoiceForPurchase(card, occurredAt);
+          dueDate = cycle.dueDate;
+        } else {
+          dueDate = null;
+        }
+      } else {
+        dueDate = null;
+      }
+    }
+
     if (existing.accountId && body.amount !== undefined) {
       const oldDelta = existing.type === 'INCOME' ? -Number(existing.amount) : Number(existing.amount);
       await prisma.account.update({ where: { id: existing.accountId }, data: { balance: { increment: oldDelta } } });
@@ -101,7 +130,7 @@ export async function transactionRoutes(app: FastifyInstance) {
 
     const tx = await prisma.transaction.update({
       where: { id },
-      data: body,
+      data: { ...body, dueDate },
       include: { category: true, account: true },
     });
 

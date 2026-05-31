@@ -14,18 +14,38 @@ export async function creditCardRoutes(app: FastifyInstance) {
       prisma.creditCard.findMany({ where: { workspaceId }, orderBy: { name: 'asc' } }),
       prisma.transaction.findMany({
         where: { workspaceId, paymentMethod: 'credit', creditCardId: { not: null } },
-        select: { creditCardId: true, amount: true, paidAt: true },
+        select: { creditCardId: true, amount: true, paidAt: true, dueDate: true },
       }),
     ]);
 
     return cards.map(card => {
-      const usedAmount = creditTxs
-        .filter(t => t.creditCardId === card.id && t.paidAt === null)
-        .reduce((s, t) => s + Number(t.amount), 0);
+      const cardUnpaidTxs = creditTxs.filter(t => t.creditCardId === card.id && t.paidAt === null);
+      const usedAmount = cardUnpaidTxs.reduce((s, t) => s + Number(t.amount), 0);
       const limit = card.limit ? Number(card.limit) : null;
       const availableLimit = limit !== null ? Math.max(0, limit - usedAmount) : null;
-      const next = nextUpcomingDueMonth(card);
-      return { ...card, limit, usedAmount, availableLimit, nextDueMonth: next.month, nextDueYear: next.year, nextDueDate: next.dueDate };
+
+      let nextDueMonth: number;
+      let nextDueYear: number;
+      let nextDueDate: Date;
+
+      const unpaidWithDueDate = cardUnpaidTxs.filter(t => t.dueDate);
+      if (unpaidWithDueDate.length > 0) {
+        // Encontra a menor dueDate entre as nao pagas
+        const earliestDueDateTx = unpaidWithDueDate.reduce((earliest, current) => {
+          return new Date(current.dueDate!) < new Date(earliest.dueDate!) ? current : earliest;
+        });
+        const dDate = new Date(earliestDueDateTx.dueDate!);
+        nextDueDate = dDate;
+        nextDueMonth = dDate.getMonth() + 1;
+        nextDueYear = dDate.getFullYear();
+      } else {
+        const next = nextUpcomingDueMonth(card);
+        nextDueMonth = next.month;
+        nextDueYear = next.year;
+        nextDueDate = next.dueDate;
+      }
+
+      return { ...card, limit, usedAmount, availableLimit, nextDueMonth, nextDueYear, nextDueDate };
     });
   });
 
