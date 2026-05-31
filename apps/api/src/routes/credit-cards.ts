@@ -117,8 +117,10 @@ export async function creditCardRoutes(app: FastifyInstance) {
       orderBy: { occurredAt: 'desc' },
     });
 
-    const total = transactions.reduce((s, t) => s + Number(t.amount), 0);
-    const paidTotal = transactions.filter(t => t.paidAt).reduce((s, t) => s + Number(t.amount), 0);
+    // Fatura líquida: despesas somam, estornos/receitas no cartão subtraem.
+    const signed = (t: { type: string; amount: number }) => (t.type === 'INCOME' ? -Number(t.amount) : Number(t.amount));
+    const total = transactions.reduce((s, t) => s + signed(t), 0);
+    const paidTotal = transactions.filter(t => t.paidAt).reduce((s, t) => s + signed(t), 0);
     const isPaid = transactions.length > 0 && transactions.every(t => t.paidAt);
 
     return { card, period: { start, end }, dueDate, dueMonth: { year, month }, transactions, total, paidTotal, isPaid };
@@ -143,13 +145,14 @@ export async function creditCardRoutes(app: FastifyInstance) {
 
     const txs = await prisma.transaction.findMany({
       where: { workspaceId, creditCardId: id, dueDate: { gte: dueMonthStart, lte: dueMonthEnd } },
-      select: { id: true, amount: true, paidAt: true },
+      select: { id: true, amount: true, paidAt: true, type: true },
     });
     // Prisma MongoDB nao filtra paidAt: null corretamente — filtrar em JS
-    const unpaid = txs.filter(t => t.paidAt === null);
+    const unpaid = txs.filter(t => !t.paidAt);
     if (unpaid.length === 0) return { success: true, paid: 0, count: 0, dueDate };
 
-    const total = unpaid.reduce((s, t) => s + Number(t.amount), 0);
+    // Líquido: estornos (INCOME) reduzem o valor a pagar.
+    const total = unpaid.reduce((s, t) => s + (t.type === 'INCOME' ? -Number(t.amount) : Number(t.amount)), 0);
     await prisma.transaction.updateMany({
       where: { id: { in: unpaid.map(t => t.id) } },
       data: { paidAt: new Date() },

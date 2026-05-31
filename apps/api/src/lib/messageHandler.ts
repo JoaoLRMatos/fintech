@@ -406,10 +406,10 @@ export async function handleIncomingMessage(
       await sendReply('❌ Não identifiquei o cartão. Cadastre seus cartões e tente: "paguei o cartão BB".');
       return { success: false };
     }
-    // Busca todas as despesas do cartão e filtra "não pagas" em JS
+    // Busca todos os lançamentos do cartão e filtra "não pagos" em JS
     // (Prisma+MongoDB não casa paidAt:null com campo ausente).
     const all = await prisma.transaction.findMany({
-      where: { workspaceId: workspace.id, creditCardId: card.id, type: 'EXPENSE' },
+      where: { workspaceId: workspace.id, creditCardId: card.id },
     });
     const unpaid: any[] = all.filter((t: any) => !t.paidAt && t.dueDate);
 
@@ -426,7 +426,8 @@ export async function handleIncomingMessage(
       return d.getFullYear() === firstDue.getFullYear() && d.getMonth() === firstDue.getMonth();
     });
 
-    const total = invoice.reduce((s: number, t: any) => s + Number(t.amount), 0);
+    // Líquido: estornos (INCOME) reduzem o valor a pagar.
+    const total = invoice.reduce((s: number, t: any) => s + (t.type === 'INCOME' ? -Number(t.amount) : Number(t.amount)), 0);
     await prisma.transaction.updateMany({
       where: { id: { in: invoice.map((t: any) => t.id) } },
       data: { paidAt: new Date() },
@@ -551,10 +552,11 @@ export async function handleIncomingMessage(
     });
     const byCard = new Map<string, number>();
     for (const t of creditTxRaw) {
-      if (t.paidAt) continue;          // já paga
-      if (t.type !== 'EXPENSE') continue; // só o que se paga (ignora estorno/crédito)
+      if (t.paidAt) continue; // já paga
+      // Fatura líquida: despesa soma, estorno/receita no cartão subtrai.
+      const v = t.type === 'INCOME' ? -Number(t.amount) : Number(t.amount);
       const k = t.creditCardId as string;
-      byCard.set(k, (byCard.get(k) ?? 0) + Number(t.amount));
+      byCard.set(k, (byCard.get(k) ?? 0) + v);
     }
 
     // 2) Recorrentes: receita entra na base (p/ dízimo) e despesas vão para a lista
@@ -595,9 +597,10 @@ export async function handleIncomingMessage(
     let total = 0;
     let msg = `📅 *A pagar em ${monthLabel}*\n`;
 
-    if (byCard.size > 0) {
+    const cardsToPay = [...byCard.entries()].filter(([, amount]) => amount > 0.005);
+    if (cardsToPay.length > 0) {
       msg += `\n💳 *Faturas de cartão:*\n`;
-      for (const [cardId, amount] of byCard) {
+      for (const [cardId, amount] of cardsToPay) {
         const card = creditCards.find((c: any) => c.id === cardId);
         const venc = card ? ` (vence dia ${card.billingDay})` : '';
         msg += `  • ${card?.name ?? 'Cartão'}: ${fmt(amount)}${venc}\n`;
