@@ -54,7 +54,12 @@ async function startPolling(token: string, log: any) {
 
 export async function telegramRoutes(app: FastifyInstance) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  // O Telegram só aceita secret token com [A-Za-z0-9_-]. Higienizamos o valor do
+  // env (removendo caracteres proibidos) e usamos o MESMO valor saneado tanto no
+  // registro do webhook quanto na validação das requisições — assim nunca quebra,
+  // independente do que estiver configurado no dashboard.
+  const rawSecret = (process.env.TELEGRAM_WEBHOOK_SECRET ?? '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 256);
+  const webhookSecret = rawSecret.length >= 8 ? rawSecret : undefined;
 
   const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
   // URL pública para o webhook. Render normalmente seta RENDER_EXTERNAL_URL,

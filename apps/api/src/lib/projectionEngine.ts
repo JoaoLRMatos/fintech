@@ -46,6 +46,7 @@ export interface MonthProjection {
   committedRatio: number; // (fixos + parcelas) / receita
   isProjection: boolean;
   breakdown: MonthBreakdown;
+  transactions?: any[];
 }
 
 function monthWindow(base: Date, offset: number) {
@@ -124,15 +125,22 @@ export async function projectMonths(workspaceId: string, input: ProjectInput = {
   const rangeStart = monthWindow(baseDate, startOffset).start;
   const rangeEnd = monthWindow(baseDate, startOffset + horizon - 1).end;
 
-  const [rules, events, budgets, proRules, futureTx] = await Promise.all([
+  const [rules, events, budgets, proRules, futureTx, categories] = await Promise.all([
     prisma.recurringRule.findMany({ where: { workspaceId, active: true } }),
     prisma.plannedEvent.findMany({ where: { workspaceId, realized: false, expectedAt: { gte: rangeStart, lte: rangeEnd } } }),
     prisma.budgetEntry.findMany({ where: { workspaceId } }),
     prisma.proportionalRule.findMany({ where: { workspaceId, active: true } }),
     prisma.transaction.findMany({
-      where: { workspaceId, occurredAt: { gte: rangeStart, lte: rangeEnd } },
-      select: { amount: true, type: true, occurredAt: true, installmentGroup: true, categoryId: true },
+      where: {
+        workspaceId,
+        OR: [
+          { occurredAt: { gte: rangeStart, lte: rangeEnd } },
+          { paymentMethod: 'credit', paidAt: null, dueDate: { gte: rangeStart, lte: rangeEnd } }
+        ]
+      },
+      include: { category: true }
     }),
+    prisma.category.findMany({ where: { workspaceId } }),
   ]);
 
   const hypothetical = input.hypothetical ?? [];
@@ -142,21 +150,37 @@ export async function projectMonths(workspaceId: string, input: ProjectInput = {
 
   for (let i = 0; i < horizon; i++) {
     const w = monthWindow(baseDate, startOffset + i);
+    const monthTx: any[] = [];
 
-    // 1) Transações já lançadas no futuro (parcelas + agendadas) por janela de data
+    // 1) Transações já lançadas no futuro (parcelas + agendadas / faturas pendentes de cartão) por janela de data
     let scheduledIncome = 0;
     let scheduledExpense = 0;
     let installments = 0;
     const realizedByCategory = new Map<string, number>();
     for (const tx of futureTx) {
-      if (tx.occurredAt < w.start || tx.occurredAt > w.end) continue;
+      const isCredit = tx.paymentMethod === 'credit';
+      const targetDate = (isCredit && tx.dueDate) ? tx.dueDate : tx.occurredAt;
+      if (targetDate < w.start || targetDate > w.end) continue;
+      
       const amt = Number(tx.amount);
-      if (tx.type === 'INCOME') scheduledIncome += amt;
-      else if (tx.type === 'EXPENSE') {
+      if (tx.type === 'INCOME') {
+        scheduledIncome += amt;
+      } else if (tx.type === 'EXPENSE') {
         scheduledExpense += amt;
         if (tx.installmentGroup) installments += amt;
         if (tx.categoryId) realizedByCategory.set(tx.categoryId, (realizedByCategory.get(tx.categoryId) ?? 0) + amt);
       }
+
+      monthTx.push({
+        id: tx.id,
+        description: tx.description,
+        amount: amt,
+        type: tx.type,
+        occurredAt: targetDate,
+        paymentMethod: tx.paymentMethod,
+        category: tx.category,
+        isProjection: true,
+      });
     }
 
     // 2) Regras recorrentes que disparam no mês (ainda não materializadas no futuro)
@@ -169,6 +193,17 @@ export async function projectMonths(workspaceId: string, input: ProjectInput = {
       const total = Number(r.amount) * n;
       if (r.type === 'INCOME') recurringIncome += total;
       else { recurringExpense += total; fixed += total; }
+
+      const cat = r.categoryId ? categories.find(c => c.id === r.categoryId) : undefined;
+      monthTx.push({
+        id: `recur-${r.id}-${w.key}`,
+        description: `[Fixo] ${r.description}`,
+        amount: total,
+        type: r.type,
+        occurredAt: new Date(w.start),
+        category: cat,
+        isProjection: true,
+      });
     }
 
     // 3) Eventos pontuais (13º, férias, IPVA...)
@@ -176,8 +211,20 @@ export async function projectMonths(workspaceId: string, input: ProjectInput = {
     let plannedExpense = 0;
     for (const e of events) {
       if (e.expectedAt < w.start || e.expectedAt > w.end) continue;
-      if (e.type === 'INCOME') plannedIncome += Number(e.amount);
-      else plannedExpense += Number(e.amount);
+      const amt = Number(e.amount);
+      if (e.type === 'INCOME') plannedIncome += amt;
+      else plannedExpense += amt;
+
+      const cat = e.categoryId ? categories.find(c => c.id === e.categoryId) : undefined;
+      monthTx.push({
+        id: `event-${e.id}`,
+        description: `[Planejado] ${e.description}`,
+        amount: amt,
+        type: e.type,
+        occurredAt: e.expectedAt,
+        category: cat,
+        isProjection: true,
+      });
     }
 
     // 4) Orçamento de variáveis ainda não realizado naquele mês
@@ -185,14 +232,40 @@ export async function projectMonths(workspaceId: string, input: ProjectInput = {
     for (const b of budgets) {
       if (b.year !== w.year || b.month !== w.month) continue;
       const realized = realizedByCategory.get(b.categoryId) ?? 0;
-      budgetVariable += Math.max(0, Number(b.planned) - realized);
+      const amt = Math.max(0, Number(b.planned) - realized);
+      if (amt > 0) {
+        budgetVariable += amt;
+        const cat = categories.find(c => c.id === b.categoryId);
+        monthTx.push({
+          id: `budget-${b.id}`,
+          description: `[Previsto] Limite de gastos`,
+          amount: amt,
+          type: 'EXPENSE',
+          occurredAt: new Date(w.start),
+          category: cat,
+          isProjection: true,
+        });
+      }
     }
 
     const income = scheduledIncome + recurringIncome + plannedIncome;
 
     // 5) Despesas proporcionais à renda (dízimo = % da receita do mês)
     let proportional = 0;
-    for (const p of proRules) proportional += Number(p.percent) * income;
+    for (const p of proRules) {
+      const amt = Number(p.percent) * income;
+      proportional += amt;
+      const cat = p.categoryId ? categories.find(c => c.id === p.categoryId) : undefined;
+      monthTx.push({
+        id: `pro-${p.id}-${w.key}`,
+        description: `[Proporcional] ${p.description}`,
+        amount: amt,
+        type: 'EXPENSE',
+        occurredAt: new Date(w.start),
+        category: cat,
+        isProjection: true,
+      });
+    }
 
     let expense = scheduledExpense + recurringExpense + plannedExpense + budgetVariable + proportional;
 
@@ -206,6 +279,15 @@ export async function projectMonths(workspaceId: string, input: ProjectInput = {
       if (monthIndexAbs >= hStart && monthIndexAbs < hStart + parcels) {
         expense += per;
         installments += per;
+
+        monthTx.push({
+          id: `hypothetical-${h.description || 'compra'}-${w.key}`,
+          description: `[Simulação] ${h.description || 'Compra'}`,
+          amount: per,
+          type: 'EXPENSE',
+          occurredAt: new Date(w.start),
+          isProjection: true,
+        });
       }
     }
 
@@ -225,6 +307,7 @@ export async function projectMonths(workspaceId: string, input: ProjectInput = {
       closingBalance: carry,
       committedRatio: income > 0 ? (fixed + installments) / income : 0,
       isProjection: true,
+      transactions: monthTx,
       breakdown: {
         recurringIncome,
         recurringExpense,

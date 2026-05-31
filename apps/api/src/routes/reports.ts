@@ -89,6 +89,7 @@ export async function reportRoutes(app: FastifyInstance) {
           closingBalance: m.closingBalance,
           committedRatio: m.committedRatio,
           isProjection: true,
+          transactions: m.transactions,
         });
       }
     }
