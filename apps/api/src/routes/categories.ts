@@ -16,6 +16,9 @@ export async function categoryRoutes(app: FastifyInstance) {
       name: z.string().min(1),
       kind: z.enum(['INCOME', 'EXPENSE', 'TRANSFER']),
       color: z.string().optional(),
+      group: z.enum(['INCOME', 'FIXED', 'VARIABLE', 'EXTRA', 'OPTIONAL', 'CREDIT', 'INVESTMENT']).optional(),
+      isEssential: z.boolean().optional(),
+      monthlyBudget: z.number().positive().nullable().optional(),
     }).parse(request.body);
 
     return prisma.category.create({ data: { ...body, workspaceId } });
@@ -27,6 +30,9 @@ export async function categoryRoutes(app: FastifyInstance) {
     const body = z.object({
       name: z.string().min(1).optional(),
       color: z.string().optional(),
+      group: z.enum(['INCOME', 'FIXED', 'VARIABLE', 'EXTRA', 'OPTIONAL', 'CREDIT', 'INVESTMENT']).optional(),
+      isEssential: z.boolean().optional(),
+      monthlyBudget: z.number().positive().nullable().optional(),
     }).parse(request.body);
 
     const cat = await prisma.category.findFirst({ where: { id, workspaceId } });

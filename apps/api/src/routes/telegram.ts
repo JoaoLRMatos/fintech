@@ -39,7 +39,7 @@ async function startPolling(token: string, log: any) {
           }
         };
 
-        handleIncomingMessage(text, sendFn, log).catch((err) =>
+        handleIncomingMessage(text, sendFn, log, chatId).catch((err) =>
           log.error(err, 'Erro ao processar mensagem Telegram')
         );
       }
@@ -103,7 +103,7 @@ export async function telegramRoutes(app: FastifyInstance) {
       }
     };
 
-    return handleIncomingMessage(text, sendFn, request.log);
+    return handleIncomingMessage(text, sendFn, request.log, chatId);
   });
 
   // ── Configurar webhook (requer autenticação) ──

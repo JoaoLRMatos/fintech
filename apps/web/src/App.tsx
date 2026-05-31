@@ -12,6 +12,7 @@ import { RecurringPage } from './pages/RecurringPage';
 import { WhatsAppPage } from './pages/WhatsAppPage';
 import { CreditCardsPage } from './pages/CreditCardsPage';
 import { ReportsPage } from './pages/ReportsPage';
+import { ProjectionPage } from './pages/ProjectionPage';
 import { ImportPage } from './pages/ImportPage';
 
 function GuestRoute({ children }: { children: React.ReactNode }) {
@@ -38,6 +39,7 @@ export default function App() {
             <Route path="/credit-cards" element={<CreditCardsPage />} />
             <Route path="/recurring" element={<RecurringPage />} />
             <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/projection" element={<ProjectionPage />} />
             <Route path="/whatsapp" element={<WhatsAppPage />} />
           </Route>
 

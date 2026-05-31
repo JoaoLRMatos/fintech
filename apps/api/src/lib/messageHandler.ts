@@ -1,11 +1,27 @@
 import { randomUUID } from 'crypto';
 import { prisma } from './prisma.js';
 import { processWhatsAppMessage } from './processMessage.js';
+import { projectMonths, simulatePurchase } from './projectionEngine.js';
+import { computeSafeToSpend } from './insightsEngine.js';
+
+const MONTH_NAMES = [
+  'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+];
+
+/** Quantos meses à frente está o próximo mês-alvo (1-12). 0 se for o mês atual. */
+function monthsUntil(targetMonth: number, from = new Date()): number {
+  const cur = from.getMonth() + 1;
+  let diff = targetMonth - cur;
+  if (diff < 0) diff += 12;
+  return diff;
+}
 
 export async function handleIncomingMessage(
   text: string,
   sendReply: (message: string) => Promise<void>,
   log: { error: (err: unknown, msg: string) => void },
+  chatId?: number | string,
 ) {
   const workspace = await prisma.workspace.findFirst({
     include: { categories: true, accounts: true, creditCards: true },
@@ -14,6 +30,11 @@ export async function handleIncomingMessage(
   if (!workspace) {
     await sendReply('❌ Nenhum workspace configurado.');
     return { success: false, error: 'Nenhum workspace configurado.' };
+  }
+
+  // Captura o chat p/ permitir alertas proativos (Telegram).
+  if (chatId !== undefined && String(chatId) !== (workspace as any).telegramChatId) {
+    await prisma.workspace.update({ where: { id: workspace.id }, data: { telegramChatId: String(chatId) } }).catch(() => {});
   }
 
   const categoryNames = workspace.categories.map((c: { name: string }) => c.name);
@@ -121,6 +142,8 @@ export async function handleIncomingMessage(
           amount: installmentAmount,
           description: `${parsed.description} (${i + 1}/${parsed.installments})`,
           occurredAt: date,
+          // 1ª parcela já é paga; as demais ficam agendadas (futuro vs já pago)
+          status: i === 0 ? 'CONFIRMED' : 'SCHEDULED',
           source: 'telegram',
           installmentGroup: groupId,
           installmentCurrent: i + 1,
@@ -137,11 +160,24 @@ export async function handleIncomingMessage(
       await prisma.account.update({ where: { id: account.id }, data: { balance: { increment: -installmentAmount } } });
     }
 
+    // Mostra o impacto futuro da compra (o diferencial: ver o futuro antes/depois de gastar)
+    let impacto = '';
+    try {
+      const proj = await projectMonths(workspace.id, { horizon: parsed.installments });
+      const neg = proj.find(m => m.closingBalance < 0);
+      if (neg) {
+        impacto = `\n⚠️ Atenção: seu saldo previsto fica negativo em *${neg.label}* (${fmt(neg.closingBalance)}).`;
+      } else {
+        impacto = `\n🔮 Saldo segue positivo nos próximos meses. ✅`;
+      }
+    } catch { /* projeção é best-effort */ }
+
     await sendReply(
       `🛒 Parcelamento registrado!\n` +
       `${parsed.description}: ${fmt(parsed.amount)} em ${parsed.installments}x de ${fmt(installmentAmount)}\n` +
       `Parcelas lançadas de ${new Date().toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })} ` +
-      `até ${txs[txs.length - 1].occurredAt.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })}`
+      `até ${txs[txs.length - 1].occurredAt.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })}` +
+      impacto
     );
     return { success: true, installments: txs.length };
   }
@@ -156,6 +192,9 @@ export async function handleIncomingMessage(
     const category = findCategory(parsed.category);
     const txType = parsed.type === 'income' ? 'INCOME' as const : 'EXPENSE' as const;
     const now = new Date();
+    const day = parsed.dayOfMonth && parsed.dayOfMonth >= 1 && parsed.dayOfMonth <= 31
+      ? parsed.dayOfMonth
+      : now.getDate();
 
     const rule = await prisma.recurringRule.create({
       data: {
@@ -163,8 +202,8 @@ export async function handleIncomingMessage(
         amount: parsed.amount,
         description: parsed.description,
         frequency: parsed.frequency || 'MONTHLY',
-        dayOfMonth: now.getDate(),
-        nextDueDate: new Date(now.getFullYear(), now.getMonth() + 1, now.getDate()),
+        dayOfMonth: day,
+        nextDueDate: new Date(now.getFullYear(), now.getMonth() + 1, day),
         workspaceId: workspace.id,
         categoryId: category?.id ?? null,
         accountId: account?.id ?? null,
@@ -198,6 +237,113 @@ export async function handleIncomingMessage(
       `Primeira transação registrada. Próxima: dia ${rule.nextDueDate.getDate()} de cada mês.`
     );
     return { success: true, recurringRule: rule };
+  }
+
+  // ── INTENT: register_planned_event (receita/despesa pontual futura) ──
+  if (parsed.intent === 'register_planned_event') {
+    if (!parsed.amount) {
+      await sendReply('❌ Não consegui identificar o valor. Tente: "vou receber 13º em dezembro 2500"');
+      return { success: false };
+    }
+    const category = findCategory(parsed.category);
+    const now = new Date();
+    const ahead = parsed.targetMonth ? monthsUntil(parsed.targetMonth, now) : 1;
+    const monthIdx = (now.getMonth() + ahead) % 12;
+    const year = now.getFullYear() + Math.floor((now.getMonth() + ahead) / 12);
+    const expectedAt = new Date(year, monthIdx, 15);
+
+    const event = await prisma.plannedEvent.create({
+      data: {
+        type: parsed.type === 'income' ? 'INCOME' : 'EXPENSE',
+        amount: parsed.amount,
+        description: parsed.description,
+        expectedAt,
+        categoryId: category?.id ?? null,
+        workspaceId: workspace.id,
+      },
+    });
+
+    const emoji = parsed.type === 'income' ? '💰' : '📌';
+    await sendReply(
+      `${emoji} Evento futuro registrado!\n` +
+      `${parsed.description}: ${fmt(parsed.amount)} previsto para *${MONTH_NAMES[monthIdx]} de ${year}*.\n` +
+      `🔮 Já incluí na sua projeção de saldo.`
+    );
+    return { success: true, plannedEvent: event };
+  }
+
+  // ── INTENT: simulate_purchase ("posso comprar?") ──
+  if (parsed.intent === 'simulate_purchase') {
+    if (!parsed.amount) {
+      await sendReply('❌ Não entendi o valor da compra. Tente: "posso comprar uma TV de 3600 em 12x?"');
+      return { success: false };
+    }
+    const installments = parsed.installments && parsed.installments >= 1 ? parsed.installments : 1;
+    const sim = await simulatePurchase(
+      workspace.id,
+      { total: parsed.amount, installments, description: parsed.description },
+      { horizon: 12 },
+    );
+
+    const baseAvg = sim.base.reduce((s, m) => s + m.saldoMes, 0) / (sim.base.length || 1);
+    const newAvg = sim.withPurchase.reduce((s, m) => s + m.saldoMes, 0) / (sim.withPurchase.length || 1);
+    const parcelaTxt = installments > 1 ? `${installments}x de ${fmt(sim.perInstallment)}` : 'à vista';
+
+    let msg = `🔮 *Simulação* — ${parsed.description}: ${fmt(parsed.amount)} (${parcelaTxt})\n\n`;
+    msg += `Sobra média/mês: ${fmt(baseAvg)} → ${fmt(newAvg)}\n`;
+    msg += `Comprometimento máx. da renda: ${Math.round(sim.maxCommittedRatio * 100)}%\n\n`;
+    if (sim.affordable) {
+      msg += `✅ Cabe no seu orçamento — o saldo nunca fica negativo.`;
+    } else {
+      msg += `⚠️ Não recomendado: seu saldo fica negativo em *${sim.firstNegativeMonth!.label}* (${fmt(sim.firstNegativeMonth!.closingBalance)}).`;
+      if (installments < 18) msg += `\n💡 Dica: diluir em mais parcelas reduz o impacto mensal.`;
+    }
+    await sendReply(msg);
+    return { success: true, simulation: { affordable: sim.affordable } };
+  }
+
+  // ── INTENT: query_projection (saldo futuro) ──
+  if (parsed.intent === 'query_projection') {
+    const now = new Date();
+    let horizon = parsed.horizonMonths && parsed.horizonMonths >= 1 ? parsed.horizonMonths : 6;
+    if (parsed.targetMonth) horizon = Math.max(1, monthsUntil(parsed.targetMonth, now));
+    horizon = Math.min(horizon, 12);
+
+    const proj = await projectMonths(workspace.id, { horizon });
+    if (parsed.targetMonth) {
+      const target = proj[proj.length - 1];
+      let msg = `📈 *Saldo previsto — ${target.label}*\n\n`;
+      msg += `Entradas: ${fmt(target.income)}\n`;
+      msg += `Saídas: ${fmt(target.expense)}\n`;
+      msg += `Saldo acumulado: ${fmt(target.closingBalance)} ${target.closingBalance < 0 ? '🔴' : '✅'}`;
+      await sendReply(msg);
+    } else {
+      let msg = `📈 *Projeção dos próximos ${proj.length} meses*\n\n`;
+      for (const m of proj) {
+        const icon = m.closingBalance < 0 ? '🔴' : '🟢';
+        msg += `${icon} ${m.label}: ${fmt(m.closingBalance)}\n`;
+      }
+      const avg = proj.reduce((s, m) => s + m.saldoMes, 0) / (proj.length || 1);
+      msg += `\nSobra média prevista: ${fmt(avg)}/mês`;
+      await sendReply(msg);
+    }
+    return { success: true };
+  }
+
+  // ── INTENT: query_safe_to_spend (limite saudável) ──
+  if (parsed.intent === 'query_safe_to_spend') {
+    const safe = await computeSafeToSpend(workspace.id);
+    let msg = `💡 *Limite saudável de gasto*\n\n`;
+    if (safe.amount > 0) {
+      msg += `Você pode gastar *${fmt(safe.amount)}* livremente até o fim do mês.\n\n`;
+    } else {
+      msg += `⚠️ Sem margem livre este mês (faltam ${fmt(Math.abs(safe.amount))} para os compromissos).\n\n`;
+    }
+    msg += `Saldo hoje: ${fmt(safe.currentBalance)}\n`;
+    msg += `+ entradas a receber: ${fmt(safe.remainingIncome)}\n`;
+    msg += `− compromissos restantes: ${fmt(safe.remainingCommitted)}`;
+    await sendReply(msg);
+    return { success: true, safeToSpend: safe.amount };
   }
 
   // ── INTENT: query_summary ──
@@ -313,7 +459,15 @@ export async function handleIncomingMessage(
       `🛒 *Parcelamento*\n` +
       `  "200 em 6x tênis"\n\n` +
       `🔄 *Recorrente*\n` +
-      `  "netflix todo mês 40"\n\n` +
+      `  "salário recorrente todo dia 5"\n\n` +
+      `📌 *Evento futuro*\n` +
+      `  "vou receber 13º em dezembro 2500"\n\n` +
+      `🔮 *Simular compra*\n` +
+      `  "posso comprar uma TV de 3600 em 12x?"\n\n` +
+      `📈 *Projeção / futuro*\n` +
+      `  "como vai estar meu saldo em setembro?"\n` +
+      `  "saldo dos próximos 6 meses"\n` +
+      `  "quanto posso gastar esse mês?"\n\n` +
       `📊 *Consultas*\n` +
       `  "quanto gastei esse mês?"\n` +
       `  "gastos com alimentação"\n` +

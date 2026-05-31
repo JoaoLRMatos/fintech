@@ -20,6 +20,24 @@ enum Frequency {
   YEARLY
 }
 
+// Eixo organizador herdado da planilha (categoria → grupo).
+enum CategoryGroup {
+  INCOME      // receitas
+  FIXED       // despesas fixas (aluguel, internet, academia)
+  VARIABLE    // despesas variáveis (mercado, lazer livre)
+  EXTRA       // despesas extras pontuais
+  OPTIONAL    // opcionais (viagens, presentes)
+  CREDIT      // cartão de crédito / financiamento
+  INVESTMENT  // pague-se-primeiro
+}
+
+// Distingue "gasto já pago" de "gasto futuro" (parcelas/recorrências agendadas).
+enum TxStatus {
+  CONFIRMED   // já efetivado
+  SCHEDULED   // agendado/previsto (parcela ou recorrência futura)
+  CANCELLED
+}
+
 model User {
   id           String       @id @default(cuid()) @map("_id")
   email        String       @unique
@@ -54,6 +72,7 @@ model Workspace {
   id             String          @id @default(cuid()) @map("_id")
   name           String
   currency       String          @default("BRL")
+  telegramChatId String?         // chat capturado p/ alertas proativos
   organizationId String
   organization   Organization    @relation(fields: [organizationId], references: [id])
   categories     Category[]
@@ -61,6 +80,10 @@ model Workspace {
   transactions   Transaction[]
   recurringRules RecurringRule[]
   creditCards    CreditCard[]
+  budgetEntries     BudgetEntry[]
+  plannedEvents     PlannedEvent[]
+  monthlyProjections MonthlyProjection[]
+  proportionalRules ProportionalRule[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 }
@@ -78,13 +101,18 @@ model Account {
 }
 
 model Category {
-  id           String          @id @default(cuid()) @map("_id")
-  name         String
-  kind         TransactionType
-  color        String?
-  workspaceId  String
-  workspace    Workspace       @relation(fields: [workspaceId], references: [id])
-  transactions Transaction[]
+  id            String          @id @default(cuid()) @map("_id")
+  name          String
+  kind          TransactionType
+  color         String?
+  // Opcionais p/ compatibilidade com documentos já existentes no MongoDB
+  // (Prisma lança P2032 ao ler campo obrigatório ausente em doc legado).
+  group         CategoryGroup?  @default(VARIABLE)  // eixo da planilha (fixa/variável/crédito...)
+  isEssential   Boolean?        @default(false)     // essencial vs supérfluo (p/ limite saudável)
+  monthlyBudget Float?                              // teto previsto p/ variáveis ("Gastos Livre")
+  workspaceId   String
+  workspace     Workspace       @relation(fields: [workspaceId], references: [id])
+  transactions  Transaction[]
 }
 
 model Transaction {
@@ -93,6 +121,7 @@ model Transaction {
   amount             Float
   description        String
   occurredAt         DateTime
+  status             TxStatus?       @default(CONFIRMED)  // CONFIRMED = já pago | SCHEDULED = futuro (opcional p/ docs legados)
   source             String          @default("manual")
   notes              String?
   paymentMethod      String?
@@ -141,4 +170,66 @@ model CreditCard {
   transactions Transaction[]
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
+}
+
+// Orçamento previsto por categoria/mês — equivale a uma "célula" da planilha
+// para as despesas variáveis (e receitas estimadas) que não são recorrência fixa.
+model BudgetEntry {
+  id          String    @id @default(cuid()) @map("_id")
+  workspaceId String
+  categoryId  String
+  year        Int
+  month       Int       // 1-12
+  planned     Float
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([workspaceId, categoryId, year, month])
+}
+
+// Receita/despesa pontual futura (13º, férias, IPVA, bônus) — a sazonalidade
+// que na planilha era inserida à mão em colunas específicas.
+model PlannedEvent {
+  id          String          @id @default(cuid()) @map("_id")
+  workspaceId String
+  type        TransactionType
+  amount      Float
+  description String
+  expectedAt  DateTime
+  categoryId  String?
+  realized    Boolean         @default(false)
+  workspace   Workspace       @relation(fields: [workspaceId], references: [id])
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+// Cache do saldo previsto por mês + base para alertas proativos.
+model MonthlyProjection {
+  id             String    @id @default(cuid()) @map("_id")
+  workspaceId    String
+  year           Int
+  month          Int
+  openingBalance Float     // saldo acumulado que entra no mês
+  income         Float
+  expense        Float
+  closingBalance Float     // openingBalance + income − expense (carry-forward)
+  committedRatio Float     // (fixos + parcelas) / receita
+  computedAt     DateTime  @default(now())
+  workspace      Workspace @relation(fields: [workspaceId], references: [id])
+
+  @@unique([workspaceId, year, month])
+}
+
+// Despesa proporcional à renda (ex.: Dízimo = 10% da receita do mês).
+model ProportionalRule {
+  id          String    @id @default(cuid()) @map("_id")
+  workspaceId String
+  description String
+  percent     Float     // 0.10 = 10%
+  categoryId  String?
+  active      Boolean   @default(true)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }

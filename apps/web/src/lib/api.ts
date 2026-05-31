@@ -84,6 +84,13 @@ export const api = {
     yearSummary: (year?: number) =>
       request<any>(`/api/reports/year-summary${year ? `?year=${year}` : ''}`),
   },
+  projection: {
+    months: (months = 6) => request<any[]>(`/api/projection?months=${months}`),
+    insights: (months = 6, reserve = 0) => request<any>(`/api/insights?months=${months}&reserve=${reserve}`),
+    safeToSpend: (reserve = 0) => request<any>(`/api/projection/safe-to-spend?reserve=${reserve}`),
+    simulate: (data: { total: number; installments?: number; startOffset?: number; description?: string }) =>
+      request<any>('/api/projection/simulate', { method: 'POST', body: JSON.stringify(data) }),
+  },
   import: {
     preview: (file: File) => {
       const fd = new FormData();

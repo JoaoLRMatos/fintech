@@ -20,8 +20,10 @@ import { telegramRoutes } from './routes/telegram.js';
 import { recurringRoutes } from './routes/recurring.js';
 import { creditCardRoutes } from './routes/credit-cards.js';
 import { reportRoutes } from './routes/reports.js';
+import { projectionRoutes } from './routes/projection.js';
 import { importRoutes } from './routes/import.js';
 import { processRecurringRules } from './lib/recurringProcessor.js';
+import { runProactiveAlerts } from './lib/proactiveAlerts.js';
 import multipart from '@fastify/multipart';
 
 const app = Fastify({ logger: true });
@@ -71,6 +73,7 @@ await app.register(telegramRoutes);
 await app.register(recurringRoutes);
 await app.register(creditCardRoutes);
 await app.register(reportRoutes);
+await app.register(projectionRoutes);
 await app.register(importRoutes);
 
 app.setErrorHandler((error: Error, _request, reply) => {
@@ -90,6 +93,12 @@ app.listen({ port, host: '0.0.0.0' }).then(() => {
   }, 60 * 60 * 1000);
   // Roda uma vez imediatamente ao iniciar
   processRecurringRules().catch((err) => app.log.error(err, 'Erro no processamento recorrente (startup)'));
+
+  // Alertas proativos (risco de saldo negativo etc.) — uma vez a cada 12h.
+  // Só envia se TELEGRAM_PROACTIVE_ALERTS=true (desligado por padrão).
+  setInterval(() => {
+    runProactiveAlerts(app.log).catch((err) => app.log.error(err, 'Erro nos alertas proativos'));
+  }, 12 * 60 * 60 * 1000);
 }).catch((err) => {
   app.log.error(err);
   process.exit(1);

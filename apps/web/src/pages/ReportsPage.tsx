@@ -120,7 +120,7 @@ export function ReportsPage() {
                 <div className="rounded-2xl border border-amber-800/40 bg-amber-500/5 overflow-hidden">
                   <div className="px-5 py-4 border-b border-amber-800/40 flex items-center gap-2">
                     <Calendar className="h-4 w-4 text-amber-400" />
-                    <h2 className="font-semibold text-amber-300">Projeção futura (recorrentes)</h2>
+                    <h2 className="font-semibold text-amber-300">Projeção futura (recorrentes + parcelas)</h2>
                   </div>
                   {futureData.map((m: any) => (
                     <MonthRow key={m.key} m={m} expanded={expandedKey === m.key} onToggle={() => setExpandedKey(expandedKey === m.key ? null : m.key)} projected />

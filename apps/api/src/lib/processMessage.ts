@@ -5,9 +5,13 @@ export type MessageIntent =
   | 'register_transaction'
   | 'register_installment'
   | 'register_recurring'
+  | 'register_planned_event'
+  | 'simulate_purchase'
   | 'query_summary'
   | 'query_category'
   | 'query_balance'
+  | 'query_projection'
+  | 'query_safe_to_spend'
   | 'help'
   | 'unknown';
 
@@ -23,6 +27,9 @@ export interface ProcessedMessage {
   creditCardHint: string | null;
   categoryFilter: string | null;
   period: string | null;
+  dayOfMonth: number | null; // "salário todo dia 5" → 5
+  targetMonth: number | null; // mês-alvo 1-12 ("em setembro", "13º em dezembro")
+  horizonMonths: number | null; // "próximos 6 meses" → 6
   aiResponse: string | null;
 }
 
@@ -48,7 +55,7 @@ ${cardsInfo}
 Analise a mensagem do usuário e retorne APENAS um JSON (sem markdown, sem texto extra) com esta estrutura:
 
 {
-  "intent": "register_transaction" | "register_installment" | "register_recurring" | "query_summary" | "query_category" | "query_balance" | "help" | "unknown",
+  "intent": "register_transaction" | "register_installment" | "register_recurring" | "register_planned_event" | "simulate_purchase" | "query_summary" | "query_category" | "query_balance" | "query_projection" | "query_safe_to_spend" | "help" | "unknown",
   "type": "income" | "expense",
   "amount": number | null,
   "description": "descrição curta do gasto/receita",
@@ -59,6 +66,9 @@ Analise a mensagem do usuário e retorne APENAS um JSON (sem markdown, sem texto
   "creditCardHint": "nome exato do cartão cadastrado que melhor corresponde" | null,
   "categoryFilter": "nome da categoria filtrada" | null,
   "period": "month" | "week" | "year" | null,
+  "dayOfMonth": number | null,
+  "targetMonth": number | null,
+  "horizonMonths": number | null,
   "aiResponse": null
 }
 
@@ -70,23 +80,42 @@ REGRAS DE CLASSIFICAÇÃO DE INTENT:
 2. **register_installment**: Compra parcelada. Detecte padrões como "6x", "em 6 vezes", "12x67", "parcelado".
    Exemplos: "200 em 6x tênis", "12x67 celular", "notebook 3000 em 10x", "comprei um sofá 2400 em 8 vezes"
 
-3. **register_recurring**: Gasto ou receita recorrente/fixo. Palavras-chave: "todo mês", "mensal", "fixo", "assinatura", "recorrente".
-   Exemplos: "netflix todo mês 40", "academia mensal 100", "aluguel fixo 1500", "salário mensal 5000"
+3. **register_recurring**: Gasto ou receita recorrente/fixo. Palavras-chave: "todo mês", "mensal", "fixo", "assinatura", "recorrente", "todo dia X".
+   Exemplos: "netflix todo mês 40", "academia mensal 100", "aluguel fixo 1500", "salário recorrente todo dia 5"
+   → Se mencionar um dia ("todo dia 5", "dia 10"), preencha "dayOfMonth".
 
-4. **query_summary**: Pergunta sobre resumo financeiro geral do período.
+4. **register_planned_event**: Receita ou despesa PONTUAL FUTURA, num mês específico (não recorrente).
+   Exemplos: "vou receber 13º em dezembro 2500", "férias em julho 1800", "IPVA em janeiro 1200", "bônus em março 3000"
+   → Preencha "targetMonth" (1-12) com o mês do evento e "type" (income/expense).
+
+5. **simulate_purchase**: Usuário quer SIMULAR se pode/deve fazer uma compra antes de comprar.
+   Palavras-chave: "posso comprar", "dá pra comprar", "consigo comprar", "vale a pena", "e se eu comprar".
+   Exemplos: "posso comprar uma TV de 3600 em 12x?", "dá pra comprar um celular de 2000?", "consigo um notebook 10x de 300?"
+   → Preencha "amount" (valor TOTAL) e "installments" (1 se à vista).
+
+6. **query_summary**: Pergunta sobre resumo financeiro geral do período.
    Exemplos: "quanto gastei esse mês?", "resumo do mês", "como estão minhas finanças?", "gastos de abril"
 
-5. **query_category**: Pergunta sobre gastos de uma categoria específica.
+7. **query_category**: Pergunta sobre gastos de uma categoria específica.
    Exemplos: "quanto gastei de alimentação?", "gastos com transporte", "quanto foi de gasolina esse mês?"
    → Preencha "categoryFilter" com o nome da categoria mais próxima das disponíveis.
 
-6. **query_balance**: Pergunta sobre saldo.
+8. **query_balance**: Pergunta sobre saldo ATUAL das contas.
    Exemplos: "qual meu saldo?", "quanto tenho na conta?", "saldo atual"
 
-7. **help**: Pedido de ajuda ou dúvida sobre o bot.
-   Exemplos: "o que você faz?", "ajuda", "como funciona?", "comandos"
+9. **query_projection**: Pergunta sobre saldo FUTURO/previsto ou projeção.
+   Exemplos: "como vai estar meu saldo em setembro?", "saldo dos próximos 6 meses", "como fica meu financeiro até dezembro?", "vou ficar no vermelho?"
+   → Se citar um mês ("em setembro"), preencha "targetMonth" (1-12). Se citar quantidade ("próximos 6 meses"), preencha "horizonMonths".
 
-8. **unknown**: Não se encaixa em nenhum intent acima. Mensagens irrelevantes.
+10. **query_safe_to_spend**: Pergunta quanto pode gastar com segurança.
+    Exemplos: "quanto posso gastar esse mês?", "quanto posso gastar livre?", "tenho margem pra gastar?"
+
+11. **help**: Pedido de ajuda ou dúvida sobre o bot.
+    Exemplos: "o que você faz?", "ajuda", "como funciona?", "comandos"
+
+12. **unknown**: Não se encaixa em nenhum intent acima. Mensagens irrelevantes.
+
+REGRAS DE MESES (targetMonth): janeiro=1, fevereiro=2, ..., dezembro=12.
 
 REGRAS DE MEIO DE PAGAMENTO (paymentMethod):
 - "crédito", "no crédito", "no cartão", "cartão de crédito" → paymentMethod = "credit"
@@ -163,6 +192,9 @@ export async function processWhatsAppMessage(
     if (!parsed.category) parsed.category = 'Geral';
     if (!parsed.paymentMethod) parsed.paymentMethod = null;
     if (!parsed.creditCardHint) parsed.creditCardHint = null;
+    if (parsed.dayOfMonth === undefined) parsed.dayOfMonth = null;
+    if (parsed.targetMonth === undefined) parsed.targetMonth = null;
+    if (parsed.horizonMonths === undefined) parsed.horizonMonths = null;
     parsed.aiResponse = null;
 
     return parsed;
@@ -183,6 +215,9 @@ export async function processWhatsAppMessage(
       creditCardHint: null,
       categoryFilter: null,
       period: null,
+      dayOfMonth: null,
+      targetMonth: null,
+      horizonMonths: null,
       aiResponse: null,
     };
   }

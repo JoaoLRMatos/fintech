@@ -1,16 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-
-/** Avança nextDueDate de uma regra recorrente para projections */
-function nextDate(current: Date, frequency: string): Date {
-  const d = new Date(current);
-  if (frequency === 'DAILY') d.setDate(d.getDate() + 1);
-  else if (frequency === 'WEEKLY') d.setDate(d.getDate() + 7);
-  else if (frequency === 'MONTHLY') d.setMonth(d.getMonth() + 1);
-  else if (frequency === 'YEARLY') d.setFullYear(d.getFullYear() + 1);
-  return d;
-}
+import { projectMonths, currentBalance } from '../lib/projectionEngine.js';
 
 export async function reportRoutes(app: FastifyInstance) {
   app.addHook('preHandler', app.authenticate);
@@ -35,7 +26,9 @@ export async function reportRoutes(app: FastifyInstance) {
       month: number; // 1-indexed
       income: number;
       expense: number;
-      balance: number;
+      balance: number; // saldo do mês (income − expense)
+      closingBalance?: number; // saldo acumulado (carry-forward) — só na projeção
+      committedRatio?: number;
       isProjection: boolean;
       transactions?: any[];
     }> = [];
@@ -71,59 +64,31 @@ export async function reportRoutes(app: FastifyInstance) {
       result.push({ key, label, year, month, income, expense, balance: income - expense, isProjection: false, transactions });
     }
 
-    // ── Meses futuros (projeção com recorrentes) ──
+    // ── Meses futuros (projeção com saldo acumulado) ──
+    // Usa o motor de projeção: inclui recorrentes, PARCELAS (transações futuras),
+    // eventos pontuais, orçamento de variáveis e despesas proporcionais — além de
+    // carregar o saldo de um mês para o outro (carry-forward), que a planilha não fazia.
     if (futureMonths > 0) {
-      const activeRules = await prisma.recurringRule.findMany({
-        where: { workspaceId, active: true },
+      const opening = await currentBalance(workspaceId);
+      const projected = await projectMonths(workspaceId, {
+        horizon: futureMonths,
+        startOffset: 1,
+        openingBalance: opening,
+        baseDate: now,
       });
 
-      for (let i = 1; i <= futureMonths; i++) {
-        const start = new Date(now.getFullYear(), now.getMonth() + i, 1);
-        const end = new Date(now.getFullYear(), now.getMonth() + i + 1, 0, 23, 59, 59);
-        const year = start.getFullYear();
-        const month = start.getMonth() + 1;
-        const label = start.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-        const key = `${year}-${String(month).padStart(2, '0')}`;
-
-        let projectedIncome = 0;
-        let projectedExpense = 0;
-        const projected: any[] = [];
-
-        for (const rule of activeRules) {
-          if (rule.endDate && rule.endDate < start) continue;
-
-          // Simula se a regra dispara nesse mês
-          let d = new Date(rule.nextDueDate);
-          // Avança até chegarmos no período futuro
-          while (d < start) d = nextDate(d, rule.frequency);
-
-          if (d >= start && d <= end) {
-            const amount = Number(rule.amount);
-            if (rule.type === 'INCOME') projectedIncome += amount;
-            else projectedExpense += amount;
-
-            projected.push({
-              id: `proj-${rule.id}-${key}`,
-              description: rule.description,
-              amount,
-              type: rule.type,
-              occurredAt: d,
-              isProjection: true,
-              source: `recurring:${rule.id}`,
-            });
-          }
-        }
-
+      for (const m of projected) {
         result.push({
-          key,
-          label,
-          year,
-          month,
-          income: projectedIncome,
-          expense: projectedExpense,
-          balance: projectedIncome - projectedExpense,
+          key: m.key,
+          label: m.label,
+          year: m.year,
+          month: m.month,
+          income: m.income,
+          expense: m.expense,
+          balance: m.saldoMes,
+          closingBalance: m.closingBalance,
+          committedRatio: m.committedRatio,
           isProjection: true,
-          transactions: projected,
         });
       }
     }
