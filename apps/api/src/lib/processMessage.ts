@@ -8,11 +8,13 @@ export type MessageIntent =
   | 'register_planned_event'
   | 'simulate_purchase'
   | 'pay_invoice'
+  | 'delete_transaction'
   | 'query_summary'
   | 'query_category'
   | 'query_balance'
   | 'query_projection'
   | 'query_safe_to_spend'
+  | 'query_recent'
   | 'help'
   | 'unknown';
 
@@ -31,6 +33,7 @@ export interface ProcessedMessage {
   dayOfMonth: number | null; // "salário todo dia 5" → 5
   targetMonth: number | null; // mês-alvo 1-12 ("em setembro", "13º em dezembro")
   horizonMonths: number | null; // "próximos 6 meses" → 6
+  occurredAt: string | null; // data do lançamento (ISO YYYY-MM-DD) p/ lançamentos retroativos ("ontem", "dia 28")
   aiResponse: string | null;
 }
 
@@ -38,6 +41,7 @@ function buildSystemPrompt(
   categoryNames: string[],
   today: string,
   creditCards: { id: string; name: string }[],
+  todayISO: string,
 ): string {
   const cardsInfo = creditCards.length > 0
     ? creditCards.map(c => `- "${c.name}"`).join('\n')
@@ -46,6 +50,7 @@ function buildSystemPrompt(
   return `Você é um assistente financeiro inteligente que interpreta mensagens do WhatsApp em português brasileiro.
 
 DATA DE HOJE: ${today}
+DATA DE HOJE (ISO): ${todayISO}
 
 CATEGORIAS DISPONÍVEIS NO SISTEMA:
 ${categoryNames.length > 0 ? categoryNames.map(c => `- ${c}`).join('\n') : '- Nenhuma categoria cadastrada'}
@@ -56,7 +61,7 @@ ${cardsInfo}
 Analise a mensagem do usuário e retorne APENAS um JSON (sem markdown, sem texto extra) com esta estrutura:
 
 {
-  "intent": "register_transaction" | "register_installment" | "register_recurring" | "register_planned_event" | "simulate_purchase" | "pay_invoice" | "query_summary" | "query_category" | "query_balance" | "query_projection" | "query_safe_to_spend" | "help" | "unknown",
+  "intent": "register_transaction" | "register_installment" | "register_recurring" | "register_planned_event" | "simulate_purchase" | "pay_invoice" | "delete_transaction" | "query_summary" | "query_category" | "query_balance" | "query_projection" | "query_safe_to_spend" | "query_recent" | "help" | "unknown",
   "type": "income" | "expense",
   "amount": number | null,
   "description": "descrição curta do gasto/receita",
@@ -70,6 +75,7 @@ Analise a mensagem do usuário e retorne APENAS um JSON (sem markdown, sem texto
   "dayOfMonth": number | null,
   "targetMonth": number | null,
   "horizonMonths": number | null,
+  "occurredAt": "YYYY-MM-DD" | null,
   "aiResponse": null
 }
 
@@ -99,6 +105,14 @@ REGRAS DE CLASSIFICAÇÃO DE INTENT:
    Exemplos: "paguei o cartão BB", "quitei a fatura do nubank", "paguei a fatura do inter"
    → Preencha "creditCardHint" com o nome do cartão correspondente.
 
+6b. **delete_transaction**: Usuário quer APAGAR/EXCLUIR/REMOVER um lançamento que já registrou (ou corrigir um erro).
+   Palavras-chave: "exclui", "apaga", "remove", "deleta", "cancela o lançamento", "errei", "não era esse".
+   Exemplos: "exclui o lanche de 40 de ontem", "apaga aquele uber de 22", "remove o último lançamento", "deleta o mercado de 150"
+   → Preencha "amount" e/ou "description" com o que identifica o lançamento, e "occurredAt" se mencionar a data.
+
+6c. **query_recent**: Usuário quer ver os ÚLTIMOS lançamentos registrados.
+   Exemplos: "últimos lançamentos", "o que registrei hoje?", "mostra meus gastos recentes", "lista as últimas transações"
+
 7. **query_summary**: Pergunta sobre resumo financeiro geral do período.
    Exemplos: "quanto gastei esse mês?", "resumo do mês", "como estão minhas finanças?", "gastos de abril"
 
@@ -122,6 +136,15 @@ REGRAS DE CLASSIFICAÇÃO DE INTENT:
 12. **unknown**: Não se encaixa em nenhum intent acima. Mensagens irrelevantes.
 
 REGRAS DE MESES (targetMonth): janeiro=1, fevereiro=2, ..., dezembro=12.
+
+REGRAS DE DATA DO LANÇAMENTO (occurredAt):
+- Use a DATA DE HOJE (ISO) acima como referência para calcular datas relativas.
+- "hoje" ou sem menção de data → occurredAt = null (será hoje).
+- "ontem" → data de hoje menos 1 dia. "anteontem" → menos 2 dias.
+- "dia 28", "no dia 3" → dia desse número no mês atual (se já passou muito, pode ser o mês atual mesmo; mantenha o mês atual salvo indício claro).
+- "semana passada" → 7 dias atrás. "segunda passada", "sexta" → a data mais recente desse dia da semana.
+- SEMPRE retorne occurredAt no formato ISO "YYYY-MM-DD". Ex.: se hoje é 2026-05-31 e o usuário diz "ontem", occurredAt = "2026-05-30".
+- Isso vale para register_transaction, register_installment e delete_transaction (para localizar o lançamento certo).
 
 REGRAS DE MEIO DE PAGAMENTO (paymentMethod):
 - "crédito", "no crédito", "no cartão", "cartão de crédito" → paymentMethod = "credit"
@@ -176,16 +199,19 @@ export async function processWhatsAppMessage(
   categoryNames: string[],
   creditCards: { id: string; name: string }[] = [],
 ): Promise<ProcessedMessage> {
-  const today = new Date().toLocaleDateString('pt-BR', {
+  const now = new Date();
+  const today = now.toLocaleDateString('pt-BR', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
     day: 'numeric',
   });
+  // Âncora ISO em horário local para o modelo calcular datas relativas ("ontem" etc.)
+  const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
   try {
     const raw = await groqChat([
-      { role: 'system', content: buildSystemPrompt(categoryNames, today, creditCards) },
+      { role: 'system', content: buildSystemPrompt(categoryNames, today, creditCards, todayISO) },
       { role: 'user', content: text },
     ]);
 
@@ -201,6 +227,7 @@ export async function processWhatsAppMessage(
     if (parsed.dayOfMonth === undefined) parsed.dayOfMonth = null;
     if (parsed.targetMonth === undefined) parsed.targetMonth = null;
     if (parsed.horizonMonths === undefined) parsed.horizonMonths = null;
+    if (parsed.occurredAt === undefined) parsed.occurredAt = null;
     parsed.aiResponse = null;
 
     return parsed;
@@ -224,6 +251,7 @@ export async function processWhatsAppMessage(
       dayOfMonth: null,
       targetMonth: null,
       horizonMonths: null,
+      occurredAt: null,
       aiResponse: null,
     };
   }

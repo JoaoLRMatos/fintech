@@ -18,6 +18,24 @@ function monthsUntil(targetMonth: number, from = new Date()): number {
   return diff;
 }
 
+/**
+ * Resolve a data do lançamento a partir do ISO "YYYY-MM-DD" que a IA extraiu
+ * ("ontem", "dia 28"...). Usa meio-dia local para evitar problemas de fuso.
+ * Sem data → agora. Datas futuras absurdas (> hoje) são aceitas mas raras.
+ */
+function resolveOccurredAt(iso: string | null): Date {
+  if (!iso) return new Date();
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
+  if (!m) return new Date();
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+
+/** True se a data não é de hoje (lançamento retroativo/futuro). */
+function isDifferentDay(d: Date, ref = new Date()): boolean {
+  return d.getFullYear() !== ref.getFullYear() || d.getMonth() !== ref.getMonth() || d.getDate() !== ref.getDate();
+}
+
 export async function handleIncomingMessage(
   text: string,
   sendReply: (message: string) => Promise<void>,
@@ -75,18 +93,19 @@ export async function handleIncomingMessage(
     const isCredit = parsed.paymentMethod === 'credit';
     const isDebit = parsed.paymentMethod === 'debit';
     const matchedCard = findCreditCard();
+    const occurredAt = resolveOccurredAt(parsed.occurredAt); // data informada ("ontem") ou hoje
 
     let dueDate: Date | null = null;
     let closingDate: Date | null = null;
     let creditCardId: string | null = null;
     if (isCredit && matchedCard) {
-      const cycle = invoiceForPurchase(matchedCard, new Date());
+      // Usa a DATA DA COMPRA (pode ser retroativa) para decidir em qual fatura cai.
+      const cycle = invoiceForPurchase(matchedCard, occurredAt);
       dueDate = cycle.dueDate;
       closingDate = cycle.closingDate;
       creditCardId = matchedCard.id;
     } else if (isCredit) {
-      const now = new Date();
-      dueDate = new Date(now.getFullYear(), now.getMonth() + 1, 10);
+      dueDate = new Date(occurredAt.getFullYear(), occurredAt.getMonth() + 1, 10);
     }
 
     const tx = await prisma.transaction.create({
@@ -94,7 +113,7 @@ export async function handleIncomingMessage(
         type: txType,
         amount: parsed.amount,
         description: parsed.description,
-        occurredAt: new Date(),
+        occurredAt,
         source: 'telegram',
         paymentMethod: parsed.paymentMethod,
         dueDate,
@@ -112,6 +131,9 @@ export async function handleIncomingMessage(
 
     const emoji = parsed.type === 'income' ? '💰' : (isCredit ? '💳' : '💸');
     let msg = `${emoji} Registrado: ${fmt(parsed.amount)} — ${parsed.description} (${parsed.category})`;
+    if (isDifferentDay(occurredAt)) {
+      msg += `\n📆 Lançado em ${fmtDate(occurredAt)}`;
+    }
     if (isCredit) {
       const cardName = matchedCard?.name ?? parsed.creditCardHint ?? 'cartão';
       if (matchedCard && closingDate && dueDate) {
@@ -140,10 +162,11 @@ export async function handleIncomingMessage(
     const category = findCategory(parsed.category);
     const installmentAmount = Math.round((parsed.amount / parsed.installments) * 100) / 100;
     const groupId = randomUUID();
+    const baseDate = resolveOccurredAt(parsed.occurredAt); // 1ª parcela na data informada (ou hoje)
     const txs = [];
 
     for (let i = 0; i < parsed.installments; i++) {
-      const date = new Date();
+      const date = new Date(baseDate);
       date.setMonth(date.getMonth() + i);
       const tx = await prisma.transaction.create({
         data: {
@@ -396,6 +419,95 @@ export async function handleIncomingMessage(
     return { success: true, paid: total };
   }
 
+  // ── INTENT: delete_transaction ("exclui o lanche de 40 de ontem") ──
+  if (parsed.intent === 'delete_transaction') {
+    const since = new Date();
+    since.setDate(since.getDate() - 120);
+    const candidates = await prisma.transaction.findMany({
+      where: { workspaceId: workspace.id, occurredAt: { gte: since } },
+      orderBy: { createdAt: 'desc' },
+      take: 80,
+    });
+
+    if (candidates.length === 0) {
+      await sendReply('🤷 Não há lançamentos recentes para excluir.');
+      return { success: false };
+    }
+
+    // "último/última" → remove o mais recente (opcionalmente filtrando por descrição)
+    const wantsLast = /\bultim|\búltim/i.test(text);
+    const wantAmount = parsed.amount;
+    const rawDesc = (parsed.description || '').toLowerCase().trim();
+    const STOP = ['ultimo', 'último', 'ultima', 'última', 'last', 'lançamento', 'lancamento', 'gasto', 'transação', 'transacao'];
+    const wantDesc = STOP.includes(rawDesc) ? '' : rawDesc;
+    const wantDay = parsed.occurredAt ? resolveOccurredAt(parsed.occurredAt) : null;
+
+    let best: any = null;
+    if (wantsLast && wantAmount == null) {
+      const pool = (wantDesc && wantDesc.length >= 3)
+        ? candidates.filter((t: any) => t.description.toLowerCase().includes(wantDesc))
+        : candidates;
+      best = pool[0] ?? candidates[0]; // candidates já vem por createdAt desc
+    } else {
+      let bestScore = 0;
+      for (const t of candidates) {
+        let score = 0;
+        if (wantAmount != null && Math.abs(Number(t.amount) - wantAmount) < 0.01) score += 2;
+        if (wantDesc && wantDesc.length >= 3 && t.description.toLowerCase().includes(wantDesc)) score += 2;
+        if (wantDay && !isDifferentDay(t.occurredAt, wantDay)) score += 1;
+        if (score > bestScore) { bestScore = score; best = t; }
+      }
+      if (bestScore < 2) best = null; // sem match confiável, não arrisca excluir errado
+    }
+
+    if (!best) {
+      let msg = `🤔 Não achei com certeza qual excluir. Seja específico (valor + descrição), ex.: "exclui o lanche de 40".\n\nÚltimos lançamentos:\n`;
+      for (const t of candidates.slice(0, 6)) {
+        const d = t.occurredAt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        msg += `• ${d} — ${t.description}: ${fmt(Number(t.amount))}\n`;
+      }
+      await sendReply(msg);
+      return { success: false };
+    }
+
+    // Reverte o saldo se o lançamento havia impactado a conta (crédito não impacta até pagar)
+    if (best.accountId && account && best.id) {
+      const reverse = best.type === 'INCOME' ? -Number(best.amount) : Number(best.amount);
+      await prisma.account.update({ where: { id: best.accountId }, data: { balance: { increment: reverse } } });
+    }
+    await prisma.transaction.delete({ where: { id: best.id } });
+
+    const d = best.occurredAt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    let msg = `🗑️ Excluído: ${best.description} — ${fmt(Number(best.amount))} (${d})`;
+    if (best.installmentGroup) msg += `\n⚠️ Era uma parcela. As outras parcelas continuam — me diga se quer excluir todas.`;
+    if (best.accountId) msg += `\n🏦 Saldo da conta ajustado.`;
+    await sendReply(msg);
+    return { success: true, deleted: best.id };
+  }
+
+  // ── INTENT: query_recent (últimos lançamentos) ──
+  if (parsed.intent === 'query_recent') {
+    const txs = await prisma.transaction.findMany({
+      where: { workspaceId: workspace.id },
+      orderBy: { occurredAt: 'desc' },
+      take: 10,
+      include: { category: true },
+    });
+    if (txs.length === 0) {
+      await sendReply('📭 Nenhum lançamento ainda.');
+      return { success: true };
+    }
+    let msg = `🧾 *Últimos lançamentos*\n\n`;
+    for (const t of txs) {
+      const d = t.occurredAt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      const sign = t.type === 'INCOME' ? '➕' : '➖';
+      const cat = (t as any).category?.name ? ` · ${(t as any).category.name}` : '';
+      msg += `${sign} ${d} — ${t.description}: ${fmt(Number(t.amount))}${cat}\n`;
+    }
+    await sendReply(msg);
+    return { success: true, count: txs.length };
+  }
+
   // ── INTENT: query_summary ──
   if (parsed.intent === 'query_summary') {
     const now = new Date();
@@ -521,6 +633,14 @@ export async function handleIncomingMessage(
       `  "como vai estar meu saldo em setembro?"\n` +
       `  "saldo dos próximos 6 meses"\n` +
       `  "quanto posso gastar esse mês?"\n\n` +
+      `📆 *Lançar com data*\n` +
+      `  "40 lanche ontem"\n` +
+      `  "150 mercado dia 28 no crédito do BB"\n\n` +
+      `🗑️ *Excluir*\n` +
+      `  "exclui o lanche de 40"\n` +
+      `  "remove o último lançamento"\n\n` +
+      `🧾 *Últimos lançamentos*\n` +
+      `  "o que registrei essa semana?"\n\n` +
       `📊 *Consultas*\n` +
       `  "quanto gastei esse mês?"\n` +
       `  "gastos com alimentação"\n` +
