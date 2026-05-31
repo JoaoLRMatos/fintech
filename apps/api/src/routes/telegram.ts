@@ -57,9 +57,14 @@ export async function telegramRoutes(app: FastifyInstance) {
   const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
 
   const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
-  // URL pública: Render seta RENDER_EXTERNAL_URL automaticamente.
-  // Fallback: API_PUBLIC_URL definida manualmente pelo usuário no dashboard.
+  // URL pública para o webhook. Render normalmente seta RENDER_EXTERNAL_URL,
+  // mas nem sempre — RENDER_EXTERNAL_HOSTNAME é mais confiável. Fallback final:
+  // API_PUBLIC_URL/PUBLIC_URL definidos manualmente no dashboard.
+  const renderHost = process.env.RENDER_EXTERNAL_HOSTNAME
+    ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}`
+    : undefined;
   const publicUrl = process.env.RENDER_EXTERNAL_URL
+    || renderHost
     || process.env.API_PUBLIC_URL
     || process.env.PUBLIC_URL;
 
