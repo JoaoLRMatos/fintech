@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: finance-api
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build --workspace=apps/api
+    startCommand: node apps/api/dist/server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+  - type: web
+    name: fintech-web
+    env: static
+    buildCommand: npm install && npm run build --workspace=apps/web
+    staticPublishPath: apps/web/dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
