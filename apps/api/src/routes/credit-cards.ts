@@ -9,18 +9,18 @@ export async function creditCardRoutes(app: FastifyInstance) {
   // LIST -- inclui limite usado, disponivel e proximo vencimento
   app.get('/api/credit-cards', async (request) => {
     const { workspaceId } = request.user as { workspaceId: string };
-    // groupBy nao e suportado no MongoDB pelo Prisma; usar findMany + agregacao JS
-    const [cards, unpaidCreditTxs] = await Promise.all([
+    // Prisma no MongoDB nao filtra paidAt: null corretamente — buscar sem o filtro e checar em JS
+    const [cards, creditTxs] = await Promise.all([
       prisma.creditCard.findMany({ where: { workspaceId }, orderBy: { name: 'asc' } }),
       prisma.transaction.findMany({
-        where: { workspaceId, paymentMethod: 'credit', paidAt: null, creditCardId: { not: null } },
-        select: { creditCardId: true, amount: true },
+        where: { workspaceId, paymentMethod: 'credit', creditCardId: { not: null } },
+        select: { creditCardId: true, amount: true, paidAt: true },
       }),
     ]);
 
     return cards.map(card => {
-      const usedAmount = unpaidCreditTxs
-        .filter(t => t.creditCardId === card.id)
+      const usedAmount = creditTxs
+        .filter(t => t.creditCardId === card.id && t.paidAt === null)
         .reduce((s, t) => s + Number(t.amount), 0);
       const limit = card.limit ? Number(card.limit) : null;
       const availableLimit = limit !== null ? Math.max(0, limit - usedAmount) : null;
@@ -122,13 +122,16 @@ export async function creditCardRoutes(app: FastifyInstance) {
     const { dueDate } = billWindowByDueMonth(card, year, month);
 
     const txs = await prisma.transaction.findMany({
-      where: { workspaceId, creditCardId: id, paidAt: null, dueDate: { gte: dueMonthStart, lte: dueMonthEnd } },
+      where: { workspaceId, creditCardId: id, dueDate: { gte: dueMonthStart, lte: dueMonthEnd } },
+      select: { id: true, amount: true, paidAt: true },
     });
-    if (txs.length === 0) return { success: true, paid: 0, count: 0, dueDate };
+    // Prisma MongoDB nao filtra paidAt: null corretamente — filtrar em JS
+    const unpaid = txs.filter(t => t.paidAt === null);
+    if (unpaid.length === 0) return { success: true, paid: 0, count: 0, dueDate };
 
-    const total = txs.reduce((s, t) => s + Number(t.amount), 0);
+    const total = unpaid.reduce((s, t) => s + Number(t.amount), 0);
     await prisma.transaction.updateMany({
-      where: { id: { in: txs.map(t => t.id) } },
+      where: { id: { in: unpaid.map(t => t.id) } },
       data: { paidAt: new Date() },
     });
 
@@ -140,6 +143,6 @@ export async function creditCardRoutes(app: FastifyInstance) {
       await prisma.account.update({ where: { id: account.id }, data: { balance: { increment: -total } } });
     }
 
-    return { success: true, paid: total, count: txs.length, dueDate };
+    return { success: true, paid: total, count: unpaid.length, dueDate };
   });
 }
