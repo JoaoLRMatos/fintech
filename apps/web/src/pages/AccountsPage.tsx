@@ -16,9 +16,38 @@ export function AccountsPage() {
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState({ name: '', type: 'bank', balance: '0' });
 
-  const createMut = useMutation({ mutationFn: api.accounts.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); setShowForm(false); resetForm(); } });
-  const updateMut = useMutation({ mutationFn: ({ id, ...d }: any) => api.accounts.update(id, d), onSuccess: () => { qc.invalidateQueries({ queryKey: ['accounts'] }); setEditing(null); setShowForm(false); resetForm(); } });
-  const deleteMut = useMutation({ mutationFn: api.accounts.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }) });
+  const createMut = useMutation({
+    mutationFn: api.accounts.create,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      setShowForm(false);
+      resetForm();
+    },
+    onError: (err: any) => {
+      alert(`Erro ao criar conta: ${err.message}`);
+    }
+  });
+  const updateMut = useMutation({
+    mutationFn: ({ id, ...d }: any) => api.accounts.update(id, d),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      setEditing(null);
+      setShowForm(false);
+      resetForm();
+    },
+    onError: (err: any) => {
+      alert(`Erro ao atualizar conta: ${err.message}`);
+    }
+  });
+  const deleteMut = useMutation({
+    mutationFn: api.accounts.delete,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
+    onError: (err: any) => {
+      alert(`Erro ao excluir conta: ${err.message}`);
+    }
+  });
 
   function resetForm() { setForm({ name: '', type: 'bank', balance: '0' }); }
 

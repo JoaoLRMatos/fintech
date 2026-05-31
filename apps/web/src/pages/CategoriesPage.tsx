@@ -10,9 +10,38 @@ export function CategoriesPage() {
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState({ name: '', kind: 'EXPENSE' as string, color: '#64748b' });
 
-  const createMut = useMutation({ mutationFn: api.categories.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['categories'] }); setShowForm(false); resetForm(); } });
-  const updateMut = useMutation({ mutationFn: ({ id, ...d }: any) => api.categories.update(id, d), onSuccess: () => { qc.invalidateQueries({ queryKey: ['categories'] }); setEditing(null); setShowForm(false); resetForm(); } });
-  const deleteMut = useMutation({ mutationFn: api.categories.delete, onSuccess: () => qc.invalidateQueries({ queryKey: ['categories'] }) });
+  const createMut = useMutation({
+    mutationFn: api.categories.create,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['categories'] });
+      setShowForm(false);
+      resetForm();
+    },
+    onError: (err: any) => {
+      alert(`Erro ao criar categoria: ${err.message}`);
+    }
+  });
+  const updateMut = useMutation({
+    mutationFn: ({ id, ...d }: any) => api.categories.update(id, d),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['categories'] });
+      setEditing(null);
+      setShowForm(false);
+      resetForm();
+    },
+    onError: (err: any) => {
+      alert(`Erro ao atualizar categoria: ${err.message}`);
+    }
+  });
+  const deleteMut = useMutation({
+    mutationFn: api.categories.delete,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['categories'] });
+    },
+    onError: (err: any) => {
+      alert(`Erro ao excluir categoria: ${err.message}`);
+    }
+  });
 
   function resetForm() { setForm({ name: '', kind: 'EXPENSE', color: '#64748b' }); }
 

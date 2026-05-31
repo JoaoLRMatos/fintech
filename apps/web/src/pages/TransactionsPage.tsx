@@ -22,9 +22,43 @@ export function TransactionsPage() {
   const { data: accounts } = useQuery({ queryKey: ['accounts'], queryFn: api.accounts.list });
   const { data: creditCards } = useQuery({ queryKey: ['credit-cards'], queryFn: api.creditCards.list });
 
-  const createMut = useMutation({ mutationFn: api.transactions.create, onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['dashboard-summary'] }); setShowForm(false); resetForm(); } });
-  const updateMut = useMutation({ mutationFn: ({ id, ...d }: any) => api.transactions.update(id, d), onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['dashboard-summary'] }); setEditing(null); setShowForm(false); resetForm(); } });
-  const deleteMut = useMutation({ mutationFn: api.transactions.delete, onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); qc.invalidateQueries({ queryKey: ['dashboard-summary'] }); } });
+  const createMut = useMutation({
+    mutationFn: api.transactions.create,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['transactions'] });
+      qc.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      setShowForm(false);
+      resetForm();
+    },
+    onError: (err: any) => {
+      alert(`Erro ao criar lançamento: ${err.message}`);
+    }
+  });
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, ...d }: any) => api.transactions.update(id, d),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['transactions'] });
+      qc.invalidateQueries({ queryKey: ['dashboard-summary'] });
+      setEditing(null);
+      setShowForm(false);
+      resetForm();
+    },
+    onError: (err: any) => {
+      alert(`Erro ao atualizar lançamento: ${err.message}`);
+    }
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: api.transactions.delete,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['transactions'] });
+      qc.invalidateQueries({ queryKey: ['dashboard-summary'] });
+    },
+    onError: (err: any) => {
+      alert(`Erro ao excluir lançamento: ${err.message}`);
+    }
+  });
 
   const [form, setForm] = useState({ type: 'EXPENSE', amount: '', description: '', occurredAt: new Date().toISOString().slice(0, 10), categoryId: '', accountId: '', creditCardId: '', paymentMethod: '', notes: '' });
 

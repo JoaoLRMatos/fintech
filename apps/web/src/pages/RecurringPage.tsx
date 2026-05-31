@@ -23,15 +23,28 @@ export function RecurringPage() {
 
   const createMut = useMutation({
     mutationFn: api.recurring.create,
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['recurring'] }); setShowForm(false); resetForm(); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['recurring'] });
+      setShowForm(false);
+      resetForm();
+    },
+    onError: (err: any) => {
+      alert(`Erro ao criar regra recorrente: ${err.message}`);
+    }
   });
   const updateMut = useMutation({
     mutationFn: ({ id, ...d }: any) => api.recurring.update(id, d),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['recurring'] }),
+    onError: (err: any) => {
+      alert(`Erro ao atualizar regra recorrente: ${err.message}`);
+    }
   });
   const deleteMut = useMutation({
     mutationFn: api.recurring.delete,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['recurring'] }),
+    onError: (err: any) => {
+      alert(`Erro ao excluir regra recorrente: ${err.message}`);
+    }
   });
 
   function resetForm() { setForm({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10) }); }
