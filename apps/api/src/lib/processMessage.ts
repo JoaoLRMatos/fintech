@@ -7,6 +7,7 @@ export type MessageIntent =
   | 'register_recurring'
   | 'register_planned_event'
   | 'simulate_purchase'
+  | 'pay_invoice'
   | 'query_summary'
   | 'query_category'
   | 'query_balance'
@@ -55,7 +56,7 @@ ${cardsInfo}
 Analise a mensagem do usuário e retorne APENAS um JSON (sem markdown, sem texto extra) com esta estrutura:
 
 {
-  "intent": "register_transaction" | "register_installment" | "register_recurring" | "register_planned_event" | "simulate_purchase" | "query_summary" | "query_category" | "query_balance" | "query_projection" | "query_safe_to_spend" | "help" | "unknown",
+  "intent": "register_transaction" | "register_installment" | "register_recurring" | "register_planned_event" | "simulate_purchase" | "pay_invoice" | "query_summary" | "query_category" | "query_balance" | "query_projection" | "query_safe_to_spend" | "help" | "unknown",
   "type": "income" | "expense",
   "amount": number | null,
   "description": "descrição curta do gasto/receita",
@@ -93,7 +94,12 @@ REGRAS DE CLASSIFICAÇÃO DE INTENT:
    Exemplos: "posso comprar uma TV de 3600 em 12x?", "dá pra comprar um celular de 2000?", "consigo um notebook 10x de 300?"
    → Preencha "amount" (valor TOTAL) e "installments" (1 se à vista).
 
-6. **query_summary**: Pergunta sobre resumo financeiro geral do período.
+6. **pay_invoice**: Usuário avisa que PAGOU a fatura de um cartão de crédito.
+   Palavras-chave: "paguei o cartão", "paguei a fatura", "quitei o cartão", "fatura paga".
+   Exemplos: "paguei o cartão BB", "quitei a fatura do nubank", "paguei a fatura do inter"
+   → Preencha "creditCardHint" com o nome do cartão correspondente.
+
+7. **query_summary**: Pergunta sobre resumo financeiro geral do período.
    Exemplos: "quanto gastei esse mês?", "resumo do mês", "como estão minhas finanças?", "gastos de abril"
 
 7. **query_category**: Pergunta sobre gastos de uma categoria específica.

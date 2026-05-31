@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { CreditCard, Plus, Trash2, Pencil, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { CreditCard, Plus, Trash2, Pencil, ChevronLeft, ChevronRight, X, Check } from 'lucide-react';
 
 function fmt(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -37,6 +37,13 @@ export function CreditCardsPage() {
   const deleteMut = useMutation({
     mutationFn: api.creditCards.delete,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['credit-cards'] }); if (selectedCard) setSelectedCard(null); },
+  });
+  const payBillMut = useMutation({
+    mutationFn: () => api.creditCards.payBill(selectedCard!, billMonth.year, billMonth.month),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['credit-card-bill'] });
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+    },
   });
 
   function prevMonth() {
@@ -182,12 +189,28 @@ export function CreditCardsPage() {
 
           <div className="flex items-center justify-between rounded-xl bg-slate-800/60 px-4 py-3">
             <span className="text-sm text-slate-400">Total da fatura</span>
-            <strong className="text-lg text-rose-400">{fmt(bill.total)}</strong>
+            <strong className={`text-lg ${bill.isPaid ? 'text-emerald-400' : 'text-rose-400'}`}>{fmt(bill.total)}</strong>
           </div>
           <p className="text-xs text-slate-500">
-            Vencimento: {new Date(bill.dueDate).toLocaleDateString('pt-BR')} · 
+            Vencimento: {new Date(bill.dueDate).toLocaleDateString('pt-BR')} ·
             Período: {new Date(bill.period.start).toLocaleDateString('pt-BR')} – {new Date(bill.period.end).toLocaleDateString('pt-BR')}
           </p>
+
+          {bill.total > 0 && (
+            bill.isPaid ? (
+              <div className="flex items-center justify-center gap-2 rounded-xl bg-emerald-500/10 px-4 py-2.5 text-sm font-medium text-emerald-400">
+                <Check className="h-4 w-4" /> Fatura paga
+              </div>
+            ) : (
+              <button
+                onClick={() => payBillMut.mutate()}
+                disabled={payBillMut.isPending}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
+              >
+                <Check className="h-4 w-4" /> {payBillMut.isPending ? 'Pagando…' : 'Marcar fatura como paga'}
+              </button>
+            )
+          )}
 
           {bill.transactions.length === 0 ? (
             <p className="text-center text-sm text-slate-500 py-4">Nenhuma compra nesta fatura</p>
@@ -196,13 +219,16 @@ export function CreditCardsPage() {
               {bill.transactions.map((tx: any) => (
                 <div key={tx.id} className="flex items-center justify-between py-1.5 border-b border-slate-800 last:border-0">
                   <div>
-                    <p className="text-sm">{tx.description}</p>
+                    <p className="text-sm flex items-center gap-1.5">
+                      {tx.description}
+                      {tx.paidAt && <Check className="h-3.5 w-3.5 text-emerald-400" />}
+                    </p>
                     <p className="text-xs text-slate-500">
                       {new Date(tx.occurredAt).toLocaleDateString('pt-BR')}
                       {tx.category && ` · ${tx.category.name}`}
                     </p>
                   </div>
-                  <span className="text-sm text-rose-400">{fmt(Number(tx.amount))}</span>
+                  <span className={`text-sm ${tx.paidAt ? 'text-slate-500 line-through' : 'text-rose-400'}`}>{fmt(Number(tx.amount))}</span>
                 </div>
               ))}
             </div>

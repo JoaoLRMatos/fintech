@@ -3,6 +3,7 @@ import { prisma } from './prisma.js';
 import { processWhatsAppMessage } from './processMessage.js';
 import { projectMonths, simulatePurchase } from './projectionEngine.js';
 import { computeSafeToSpend } from './insightsEngine.js';
+import { invoiceForPurchase, billWindow, currentPayableInvoice, fmtDate } from './creditCard.js';
 
 const MONTH_NAMES = [
   'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
@@ -76,10 +77,12 @@ export async function handleIncomingMessage(
     const matchedCard = findCreditCard();
 
     let dueDate: Date | null = null;
+    let closingDate: Date | null = null;
     let creditCardId: string | null = null;
     if (isCredit && matchedCard) {
-      const now = new Date();
-      dueDate = new Date(now.getFullYear(), now.getMonth() + 1, matchedCard.billingDay);
+      const cycle = invoiceForPurchase(matchedCard, new Date());
+      dueDate = cycle.dueDate;
+      closingDate = cycle.closingDate;
       creditCardId = matchedCard.id;
     } else if (isCredit) {
       const now = new Date();
@@ -110,10 +113,16 @@ export async function handleIncomingMessage(
     const emoji = parsed.type === 'income' ? '💰' : (isCredit ? '💳' : '💸');
     let msg = `${emoji} Registrado: ${fmt(parsed.amount)} — ${parsed.description} (${parsed.category})`;
     if (isCredit) {
-      const venc = dueDate ? dueDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' }) : 'dia 10 do próximo mês';
       const cardName = matchedCard?.name ?? parsed.creditCardHint ?? 'cartão';
-      msg += `\n💳 Fatura: ${cardName} — vencimento: ${venc}`;
-      if (!matchedCard) msg += `\n💡 Dica: cadastre seu cartão de crédito no sistema para controle automático da fatura.`;
+      if (matchedCard && closingDate && dueDate) {
+        msg += `\n💳 *${cardName}*`;
+        msg += `\n🔒 Entra na fatura que fecha em ${fmtDate(closingDate)}`;
+        msg += `\n📅 Vencimento: ${fmtDate(dueDate)}`;
+      } else {
+        const venc = dueDate ? dueDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' }) : 'dia 10 do próximo mês';
+        msg += `\n💳 Fatura: ${cardName} — vencimento: ${venc}`;
+        msg += `\n💡 Dica: cadastre o cartão (com dia de fechamento e vencimento) para o controle automático da fatura.`;
+      }
     } else if (isDebit) {
       msg += `\n🏦 Lançado como débito — saldo atualizado.`;
     }
@@ -346,6 +355,47 @@ export async function handleIncomingMessage(
     return { success: true, safeToSpend: safe.amount };
   }
 
+  // ── INTENT: pay_invoice ("paguei o cartão BB") ──
+  if (parsed.intent === 'pay_invoice') {
+    const card = findCreditCard();
+    if (!card) {
+      await sendReply('❌ Não identifiquei o cartão. Cadastre seus cartões e tente: "paguei o cartão BB".');
+      return { success: false };
+    }
+    const inv = currentPayableInvoice(card, new Date());
+    const w = billWindow(card, inv.year, inv.month);
+    const txs = await prisma.transaction.findMany({
+      where: {
+        workspaceId: workspace.id,
+        creditCardId: card.id,
+        paidAt: null,
+        occurredAt: { gte: w.start, lte: w.end },
+      },
+    });
+
+    if (txs.length === 0) {
+      await sendReply(`✅ Nenhuma fatura em aberto no *${card.name}* (fechamento ${fmtDate(w.end)}).`);
+      return { success: true, paid: 0 };
+    }
+
+    const total = txs.reduce((s: number, t: any) => s + Number(t.amount), 0);
+    await prisma.transaction.updateMany({
+      where: { id: { in: txs.map((t: any) => t.id) } },
+      data: { paidAt: new Date() },
+    });
+    if (account) {
+      await prisma.account.update({ where: { id: account.id }, data: { balance: { increment: -total } } });
+    }
+
+    await sendReply(
+      `✅ Fatura do *${card.name}* paga!\n` +
+      `💰 Total: ${fmt(total)} (${txs.length} ${txs.length === 1 ? 'lançamento' : 'lançamentos'})\n` +
+      `📅 Vencimento: ${fmtDate(w.dueDate)}\n` +
+      `🏦 Saldo da conta atualizado.`
+    );
+    return { success: true, paid: total };
+  }
+
   // ── INTENT: query_summary ──
   if (parsed.intent === 'query_summary') {
     const now = new Date();
@@ -451,7 +501,10 @@ export async function handleIncomingMessage(
       `  "250 gasolina"\n` +
       `  "45 almoço"\n\n` +
       `💳 *Gasto no crédito*\n` +
-      `  "230 barbeiro crédito"\n\n` +
+      `  "22 no crédito no cartão do banco do brasil"\n` +
+      `  → mostra em qual fatura caiu e o vencimento\n\n` +
+      `🧾 *Paguei a fatura*\n` +
+      `  "paguei o cartão BB"\n\n` +
       `🏦 *Gasto no débito*\n` +
       `  "80 farmácia débito"\n\n` +
       `💰 *Registrar entrada*\n` +

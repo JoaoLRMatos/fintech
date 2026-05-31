@@ -77,6 +77,8 @@ export const api = {
     delete: (id: string) => request<any>(`/api/credit-cards/${id}`, { method: 'DELETE' }),
     bill: (id: string, year: number, month: number) =>
       request<any>(`/api/credit-cards/${id}/bill?year=${year}&month=${month}`),
+    payBill: (id: string, year: number, month: number) =>
+      request<any>(`/api/credit-cards/${id}/pay-bill`, { method: 'POST', body: JSON.stringify({ year, month }) }),
   },
   reports: {
     monthly: (pastMonths = 6, futureMonths = 3) =>

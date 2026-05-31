@@ -126,6 +126,7 @@ model Transaction {
   notes              String?
   paymentMethod      String?
   dueDate            DateTime?
+  paidAt             DateTime?  // quando a fatura/transação no crédito foi quitada
   installmentGroup   String?
   installmentCurrent Int?
   installmentTotal   Int?
