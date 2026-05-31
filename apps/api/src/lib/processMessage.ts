@@ -16,6 +16,8 @@ export type MessageIntent =
   | 'query_safe_to_spend'
   | 'query_recent'
   | 'query_payments'
+  | 'query_payments_detail'
+  | 'query_card_statement'
   | 'help'
   | 'unknown';
 
@@ -62,7 +64,7 @@ ${cardsInfo}
 Analise a mensagem do usuário e retorne APENAS um JSON (sem markdown, sem texto extra) com esta estrutura:
 
 {
-  "intent": "register_transaction" | "register_installment" | "register_recurring" | "register_planned_event" | "simulate_purchase" | "pay_invoice" | "delete_transaction" | "query_summary" | "query_category" | "query_balance" | "query_projection" | "query_safe_to_spend" | "query_recent" | "query_payments" | "help" | "unknown",
+  "intent": "register_transaction" | "register_installment" | "register_recurring" | "register_planned_event" | "simulate_purchase" | "pay_invoice" | "delete_transaction" | "query_summary" | "query_category" | "query_balance" | "query_projection" | "query_safe_to_spend" | "query_recent" | "query_payments" | "query_payments_detail" | "query_card_statement" | "help" | "unknown",
   "type": "income" | "expense",
   "amount": number | null,
   "description": "descrição curta do gasto/receita",
@@ -118,6 +120,16 @@ REGRAS DE CLASSIFICAÇÃO DE INTENT:
    Palavras-chave: "quanto tenho que pagar", "o que tenho que pagar", "o que vence", "contas de", "minhas contas".
    Exemplos: "quanto tenho que pagar mês que vem?", "o que tenho que pagar em junho?", "contas de junho", "o que vence esse mês?"
    → Preencha "targetMonth" (1-12). Para "mês que vem"/"próximo mês", use o número do PRÓXIMO mês. Para "esse mês", use o mês atual.
+
+6e. **query_payments_detail**: Usuário pede para DETALHAR/abrir os valores da última pergunta de contas a pagar.
+   Palavras-chave: "detalhar", "detalha", "detalhe", "o que tem nesses valores", "quais são esses gastos", "abre os valores", "o que tem dentro".
+   Exemplos: "detalha", "detalhar esses valores", "o que tem nessa fatura?", "quais gastos são esses?"
+   → Se mencionar um mês, preencha "targetMonth"; senão deixe null (usa o mês da última consulta).
+
+6f. **query_card_statement**: Usuário quer o EXTRATO de UM cartão específico num mês (lista de lançamentos da fatura).
+   Palavras-chave: "extrato", "fatura detalhada", "lançamentos do cartão".
+   Exemplos: "extrato de junho do banco do brasil", "extrato do itaú em julho", "fatura do nubank de agosto detalhada"
+   → Preencha "creditCardHint" (o cartão) e "targetMonth" (1-12, o mês de vencimento da fatura).
 
 7. **query_summary**: Pergunta sobre resumo financeiro geral do período.
    Exemplos: "quanto gastei esse mês?", "resumo do mês", "como estão minhas finanças?", "gastos de abril"

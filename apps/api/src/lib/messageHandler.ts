@@ -57,6 +57,110 @@ function recurrenceCountInMonth(rule: any, start: Date, end: Date): number {
   return c;
 }
 
+function brl(v: number): string {
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+// Contexto leve por chat: lembra o mês da última consulta de "a pagar" p/ o "detalhar".
+const lastPaymentsContext = new Map<string, { year: number; month: number }>();
+
+interface PaymentItem { desc: string; amount: number; type?: string }
+interface CardBucket { name: string; billingDay: number; net: number; items: PaymentItem[] }
+
+/** Junta tudo que há a pagar num mês: faturas (por cartão), recorrentes, dízimo, parcelas e eventos. */
+async function gatherPayments(workspaceId: string, year: number, month: number) {
+  const m0 = month - 1;
+  const start = new Date(year, m0, 1);
+  const end = new Date(year, m0 + 1, 0, 23, 59, 59, 999);
+
+  const [creditTxRaw, rules, events, proRules, instRaw, cards] = await Promise.all([
+    prisma.transaction.findMany({ where: { workspaceId, creditCardId: { not: null }, dueDate: { gte: start, lte: end } } }),
+    prisma.recurringRule.findMany({ where: { workspaceId, active: true } }),
+    prisma.plannedEvent.findMany({ where: { workspaceId, realized: false, expectedAt: { gte: start, lte: end } } }),
+    prisma.proportionalRule.findMany({ where: { workspaceId, active: true } }),
+    prisma.transaction.findMany({ where: { workspaceId, type: 'EXPENSE', creditCardId: null, installmentGroup: { not: null }, occurredAt: { gte: start, lte: end } } }),
+    prisma.creditCard.findMany({ where: { workspaceId } }),
+  ]);
+
+  // Faturas por cartão (líquido: estorno subtrai)
+  const cardMap = new Map<string, CardBucket>();
+  for (const t of creditTxRaw) {
+    if (t.paidAt) continue;
+    const card = cards.find((c: any) => c.id === t.creditCardId);
+    const key = t.creditCardId as string;
+    if (!cardMap.has(key)) cardMap.set(key, { name: card?.name ?? 'Cartão', billingDay: card?.billingDay ?? 0, net: 0, items: [] });
+    const e = cardMap.get(key)!;
+    e.items.push({ desc: t.description, amount: Number(t.amount), type: t.type });
+    e.net += t.type === 'INCOME' ? -Number(t.amount) : Number(t.amount);
+  }
+
+  // Recorrentes (receita vira base do dízimo)
+  let incomeBase = 0;
+  const recExpenses: PaymentItem[] = [];
+  for (const r of rules) {
+    const n = recurrenceCountInMonth(r, start, end);
+    if (n === 0) continue;
+    const tot = Number(r.amount) * n;
+    if (r.type === 'INCOME') incomeBase += tot;
+    else recExpenses.push({ desc: r.description, amount: tot });
+  }
+
+  // Eventos pontuais
+  const eventExpenses: PaymentItem[] = [];
+  for (const ev of events) {
+    if (ev.type === 'INCOME') incomeBase += Number(ev.amount);
+    else eventExpenses.push({ desc: ev.description, amount: Number(ev.amount) });
+  }
+
+  // Proporcionais (dízimo)
+  const proExpenses: PaymentItem[] = proRules.map((p: any) => ({
+    desc: `${p.description} (${Math.round(Number(p.percent) * 100)}%)`,
+    amount: Number(p.percent) * incomeBase,
+  }));
+
+  // Parcelas não-crédito
+  const installments: PaymentItem[] = instRaw.filter((t: any) => !t.paidAt).map((t: any) => ({ desc: t.description, amount: Number(t.amount) }));
+
+  return { cardMap, recExpenses, proExpenses, installments, eventExpenses };
+}
+
+/** Renderiza o "a pagar" do mês. `detailed` abre os itens de cada fatura de cartão. */
+function renderPayments(data: Awaited<ReturnType<typeof gatherPayments>>, monthLabel: string, detailed: boolean): { msg: string; total: number } {
+  let total = 0;
+  let msg = `📅 *A pagar em ${monthLabel}*\n`;
+
+  const cards = [...data.cardMap.values()].filter(c => c.net > 0.005);
+  if (cards.length > 0) {
+    msg += `\n💳 *Faturas de cartão:*\n`;
+    for (const c of cards) {
+      msg += `  • ${c.name}: ${brl(c.net)} (vence dia ${c.billingDay})\n`;
+      total += c.net;
+      if (detailed) {
+        for (const it of c.items) {
+          const isCredit = it.type === 'INCOME';
+          msg += `      ${isCredit ? '↩️' : '·'} ${it.desc}: ${isCredit ? '-' : ''}${brl(it.amount)}\n`;
+        }
+      }
+    }
+  }
+
+  if (data.recExpenses.length > 0 || data.proExpenses.length > 0) {
+    msg += `\n🔄 *Recorrentes/fixos:*\n`;
+    for (const r of data.recExpenses) { msg += `  • ${r.desc}: ${brl(r.amount)}\n`; total += r.amount; }
+    for (const p of data.proExpenses) { msg += `  • ${p.desc}: ${brl(p.amount)}\n`; total += p.amount; }
+  }
+  if (data.installments.length > 0) {
+    msg += `\n🛒 *Parcelas:*\n`;
+    for (const t of data.installments) { msg += `  • ${t.desc}: ${brl(t.amount)}\n`; total += t.amount; }
+  }
+  if (data.eventExpenses.length > 0) {
+    msg += `\n📌 *Outros:*\n`;
+    for (const e of data.eventExpenses) { msg += `  • ${e.desc}: ${brl(e.amount)}\n`; total += e.amount; }
+  }
+
+  return { msg, total };
+}
+
 export async function handleIncomingMessage(
   text: string,
   sendReply: (message: string) => Promise<void>,
@@ -534,104 +638,77 @@ export async function handleIncomingMessage(
     return { success: true, count: txs.length };
   }
 
-  // ── INTENT: query_payments (o que tenho a pagar em tal mês) ──
-  if (parsed.intent === 'query_payments') {
+  // ── INTENT: query_payments / query_payments_detail (o que tenho a pagar em tal mês) ──
+  if (parsed.intent === 'query_payments' || parsed.intent === 'query_payments_detail') {
+    const detailed = parsed.intent === 'query_payments_detail';
+    const ctxKey = String(chatId ?? 'default');
     const now = new Date();
-    const ahead = parsed.targetMonth ? monthsUntil(parsed.targetMonth, now) : 1; // default "mês que vem"
-    const target = new Date(now.getFullYear(), now.getMonth() + ahead, 1);
-    const year = target.getFullYear();
-    const m0 = target.getMonth();
-    const start = new Date(year, m0, 1);
-    const end = new Date(year, m0 + 1, 0, 23, 59, 59, 999);
+
+    let year: number, m0: number;
+    if (parsed.targetMonth) {
+      const ahead = monthsUntil(parsed.targetMonth, now);
+      const target = new Date(now.getFullYear(), now.getMonth() + ahead, 1);
+      year = target.getFullYear(); m0 = target.getMonth();
+    } else if (detailed && lastPaymentsContext.has(ctxKey)) {
+      const c = lastPaymentsContext.get(ctxKey)!;
+      year = c.year; m0 = c.month - 1; // usa o mês da última consulta
+    } else {
+      const target = new Date(now.getFullYear(), now.getMonth() + 1, 1); // default "mês que vem"
+      year = target.getFullYear(); m0 = target.getMonth();
+    }
+
+    lastPaymentsContext.set(ctxKey, { year, month: m0 + 1 });
     const monthLabel = `${MONTH_NAMES[m0]}/${year}`;
 
-    // 1) Faturas de cartão que vencem nesse mês (ainda não pagas)
-    // Filtra paidAt em JS — Prisma+MongoDB não casa paidAt:null com campo ausente.
-    const creditTxRaw = await prisma.transaction.findMany({
-      where: { workspaceId: workspace.id, creditCardId: { not: null }, dueDate: { gte: start, lte: end } },
-    });
-    const byCard = new Map<string, number>();
-    for (const t of creditTxRaw) {
-      if (t.paidAt) continue; // já paga
-      // Fatura líquida: despesa soma, estorno/receita no cartão subtrai.
-      const v = t.type === 'INCOME' ? -Number(t.amount) : Number(t.amount);
-      const k = t.creditCardId as string;
-      byCard.set(k, (byCard.get(k) ?? 0) + v);
-    }
-
-    // 2) Recorrentes: receita entra na base (p/ dízimo) e despesas vão para a lista
-    const rules = await prisma.recurringRule.findMany({ where: { workspaceId: workspace.id, active: true } });
-    let incomeBase = 0;
-    const recExpenses: { desc: string; amount: number }[] = [];
-    for (const r of rules) {
-      const n = recurrenceCountInMonth(r, start, end);
-      if (n === 0) continue;
-      const total = Number(r.amount) * n;
-      if (r.type === 'INCOME') incomeBase += total;
-      else recExpenses.push({ desc: r.description, amount: total });
-    }
-
-    // 3) Eventos pontuais do mês
-    const events = await prisma.plannedEvent.findMany({
-      where: { workspaceId: workspace.id, realized: false, expectedAt: { gte: start, lte: end } },
-    });
-    const eventExpenses: { desc: string; amount: number }[] = [];
-    for (const e of events) {
-      if (e.type === 'INCOME') incomeBase += Number(e.amount);
-      else eventExpenses.push({ desc: e.description, amount: Number(e.amount) });
-    }
-
-    // 4) Proporcionais à renda (ex.: dízimo = 10% da renda do mês)
-    const proRules = await prisma.proportionalRule.findMany({ where: { workspaceId: workspace.id, active: true } });
-    const proExpenses = proRules.map((p: any) => ({
-      desc: `${p.description} (${Math.round(Number(p.percent) * 100)}%)`,
-      amount: Number(p.percent) * incomeBase,
-    }));
-
-    // 5) Parcelas (não-crédito) que caem no mês e ainda não foram pagas
-    const installmentTxRaw = await prisma.transaction.findMany({
-      where: { workspaceId: workspace.id, type: 'EXPENSE', creditCardId: null, installmentGroup: { not: null }, occurredAt: { gte: start, lte: end } },
-    });
-    const installmentTx = installmentTxRaw.filter((t: any) => !t.paidAt);
-
-    let total = 0;
-    let msg = `📅 *A pagar em ${monthLabel}*\n`;
-
-    const cardsToPay = [...byCard.entries()].filter(([, amount]) => amount > 0.005);
-    if (cardsToPay.length > 0) {
-      msg += `\n💳 *Faturas de cartão:*\n`;
-      for (const [cardId, amount] of cardsToPay) {
-        const card = creditCards.find((c: any) => c.id === cardId);
-        const venc = card ? ` (vence dia ${card.billingDay})` : '';
-        msg += `  • ${card?.name ?? 'Cartão'}: ${fmt(amount)}${venc}\n`;
-        total += amount;
-      }
-    }
-
-    if (recExpenses.length > 0 || proExpenses.length > 0) {
-      msg += `\n🔄 *Recorrentes/fixos:*\n`;
-      for (const r of recExpenses) { msg += `  • ${r.desc}: ${fmt(r.amount)}\n`; total += r.amount; }
-      for (const p of proExpenses) { msg += `  • ${p.desc}: ${fmt(p.amount)}\n`; total += p.amount; }
-    }
-
-    if (installmentTx.length > 0) {
-      msg += `\n🛒 *Parcelas:*\n`;
-      for (const t of installmentTx) { msg += `  • ${t.description}: ${fmt(Number(t.amount))}\n`; total += Number(t.amount); }
-    }
-
-    if (eventExpenses.length > 0) {
-      msg += `\n📌 *Outros:*\n`;
-      for (const e of eventExpenses) { msg += `  • ${e.desc}: ${fmt(e.amount)}\n`; total += e.amount; }
-    }
+    const data = await gatherPayments(workspace.id, year, m0 + 1);
+    const { msg, total } = renderPayments(data, monthLabel, detailed);
 
     if (total === 0) {
       await sendReply(`📅 *${monthLabel}*\n\n🎉 Nada previsto a pagar nesse mês.`);
       return { success: true, total: 0 };
     }
 
-    msg += `\n💰 *Total a pagar: ${fmt(total)}*`;
-    await sendReply(msg);
+    let out = msg + `\n💰 *Total a pagar: ${brl(total)}*`;
+    if (!detailed) out += `\n\n💡 Responda *detalhar* para ver os itens de cada fatura.`;
+    await sendReply(out);
     return { success: true, total };
+  }
+
+  // ── INTENT: query_card_statement (extrato de um cartão num mês) ──
+  if (parsed.intent === 'query_card_statement') {
+    const card = findCreditCard();
+    if (!card) {
+      await sendReply('❌ Qual cartão? Ex.: "extrato de junho do Banco do Brasil".');
+      return { success: false };
+    }
+    const now = new Date();
+    const month = parsed.targetMonth ?? (now.getMonth() + 1);
+    const year = now.getFullYear();
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 0, 23, 59, 59, 999);
+
+    const txs = await prisma.transaction.findMany({
+      where: { workspaceId: workspace.id, creditCardId: card.id, dueDate: { gte: start, lte: end } },
+      orderBy: { occurredAt: 'asc' },
+    });
+
+    if (txs.length === 0) {
+      await sendReply(`🧾 *${card.name}* — fatura de ${MONTH_NAMES[month - 1]}/${year}\n\nSem lançamentos nessa fatura.`);
+      return { success: true, count: 0 };
+    }
+
+    let net = 0;
+    let msg = `🧾 *Extrato ${card.name}* — vence ${MONTH_NAMES[month - 1]}/${year}\n\n`;
+    for (const t of txs) {
+      const dd = t.occurredAt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      const isCredit = t.type === 'INCOME';
+      const paid = t.paidAt ? ' ✅' : '';
+      msg += `${isCredit ? '↩️' : '·'} ${dd} ${t.description}: ${isCredit ? '-' : ''}${brl(Number(t.amount))}${paid}\n`;
+      net += isCredit ? -Number(t.amount) : Number(t.amount);
+    }
+    msg += `\n💰 *Total da fatura: ${brl(net)}* (vence dia ${card.billingDay})`;
+    await sendReply(msg);
+    return { success: true, total: net, count: txs.length };
   }
 
   // ── INTENT: query_summary ──
@@ -769,7 +846,10 @@ export async function handleIncomingMessage(
       `  "o que registrei essa semana?"\n\n` +
       `💸 *O que tenho a pagar*\n` +
       `  "quanto tenho que pagar mês que vem?"\n` +
-      `  "o que vence em junho?"\n\n` +
+      `  "o que vence em junho?" → depois "detalhar"\n\n` +
+      `🧾 *Extrato de um cartão*\n` +
+      `  "extrato de junho do Banco do Brasil"\n` +
+      `  "extrato do Itaú em julho"\n\n` +
       `📊 *Consultas*\n` +
       `  "quanto gastei esse mês?"\n` +
       `  "gastos com alimentação"\n` +
