@@ -105,7 +105,7 @@ export function AccountsPage() {
                     <span className={`font-semibold ${Number(a.balance) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{fmt(Number(a.balance))}</span>
                     <div className="flex gap-1">
                       <button onClick={() => startEdit(a)} className="rounded p-1.5 text-slate-400 hover:bg-slate-700 hover:text-slate-200" aria-label="Editar"><Pencil className="h-4 w-4 sm:h-3.5 sm:w-3.5" /></button>
-                      <button onClick={() => { if (confirm(`Excluir "${a.name}"?`)) deleteMut.mutate(a.id); }} className="rounded p-1.5 text-slate-400 hover:bg-slate-700 hover:text-rose-400" aria-label="Excluir"><Trash2 className="h-4 w-4 sm:h-3.5 sm:w-3.5" /></button>
+                      <button onClick={() => { if (window.confirm(`Excluir "${a.name}"?`)) deleteMut.mutate(a.id); }} className="rounded p-1.5 text-slate-400 hover:bg-slate-700 hover:text-rose-400" aria-label="Excluir"><Trash2 className="h-4 w-4 sm:h-3.5 sm:w-3.5" /></button>
                     </div>
                   </div>
                 </div>

@@ -197,7 +197,7 @@ export function TransactionsPage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button onClick={() => startEdit(tx)} className="mr-2 rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200"><Pencil className="h-3.5 w-3.5" /></button>
-                    <button onClick={() => { if (confirm('Excluir este lançamento?')) deleteMut.mutate(tx.id); }} className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-rose-400"><Trash2 className="h-3.5 w-3.5" /></button>
+                    <button onClick={() => { if (window.confirm('Excluir este lançamento?')) deleteMut.mutate(tx.id); }} className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-rose-400"><Trash2 className="h-3.5 w-3.5" /></button>
                   </td>
                 </tr>
               ))}
@@ -240,7 +240,7 @@ export function TransactionsPage() {
                   <button onClick={() => startEdit(tx)} className="flex items-center gap-1.5 rounded bg-slate-800 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700">
                     <Pencil className="h-3 w-3" /> Editar
                   </button>
-                  <button onClick={() => { if (confirm('Excluir este lançamento?')) deleteMut.mutate(tx.id); }} className="flex items-center gap-1.5 rounded bg-slate-800/50 px-3 py-1.5 text-xs text-slate-400 hover:bg-rose-950/20 hover:text-rose-400">
+                  <button onClick={() => { if (window.confirm('Excluir este lançamento?')) deleteMut.mutate(tx.id); }} className="flex items-center gap-1.5 rounded bg-slate-800/50 px-3 py-1.5 text-xs text-slate-400 hover:bg-rose-950/20 hover:text-rose-400">
                     <Trash2 className="h-3 w-3" /> Excluir
                   </button>
                 </div>

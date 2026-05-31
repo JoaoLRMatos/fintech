@@ -19,6 +19,7 @@ export function RecurringPage() {
   const { data: rules, isLoading } = useQuery({ queryKey: ['recurring'], queryFn: api.recurring.list });
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10) });
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const createMut = useMutation({
     mutationFn: api.recurring.create,
@@ -132,22 +133,43 @@ export function RecurringPage() {
                 <span className={`text-base sm:text-lg font-semibold ${r.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
                   {r.type === 'INCOME' ? '+' : '-'}{fmt(Number(r.amount))}
                 </span>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => updateMut.mutate({ id: r.id, active: !r.active })}
-                    className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-                    title={r.active ? 'Pausar/Ativar' : 'Ativar/Pausar'}
-                  >
-                    {r.active ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                  </button>
-                  <button
-                    onClick={() => { if (confirm('Excluir esta regra?')) deleteMut.mutate(r.id); }}
-                    className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-rose-400"
-                    aria-label="Excluir"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
+                {confirmDeleteId === r.id ? (
+                  <div className="flex items-center gap-1.5 animate-fadeIn">
+                    <span className="text-[11px] text-rose-400 font-medium">Excluir?</span>
+                    <button
+                      onClick={() => {
+                        deleteMut.mutate(r.id);
+                        setConfirmDeleteId(null);
+                      }}
+                      className="rounded bg-rose-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-rose-500"
+                    >
+                      Sim
+                    </button>
+                    <button
+                      onClick={() => setConfirmDeleteId(null)}
+                      className="rounded border border-slate-700 px-2 py-1 text-[11px] font-semibold text-slate-300 hover:bg-slate-800"
+                    >
+                      Não
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => updateMut.mutate({ id: r.id, active: !r.active })}
+                      className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                      title={r.active ? 'Pausar/Ativar' : 'Ativar/Pausar'}
+                    >
+                      {r.active ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                    </button>
+                    <button
+                      onClick={() => setConfirmDeleteId(r.id)}
+                      className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-rose-400"
+                      aria-label="Excluir"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
