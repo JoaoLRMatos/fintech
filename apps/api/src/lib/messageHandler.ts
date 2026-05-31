@@ -36,6 +36,27 @@ function isDifferentDay(d: Date, ref = new Date()): boolean {
   return d.getFullYear() !== ref.getFullYear() || d.getMonth() !== ref.getMonth() || d.getDate() !== ref.getDate();
 }
 
+/** Quantas vezes uma regra recorrente dispara dentro de [start, end]. */
+function recurrenceCountInMonth(rule: any, start: Date, end: Date): number {
+  const adv = (x: Date) => {
+    const n = new Date(x);
+    if (rule.frequency === 'DAILY') n.setDate(n.getDate() + 1);
+    else if (rule.frequency === 'WEEKLY') n.setDate(n.getDate() + 7);
+    else if (rule.frequency === 'YEARLY') n.setFullYear(n.getFullYear() + 1);
+    else n.setMonth(n.getMonth() + 1);
+    return n;
+  };
+  let d = new Date(rule.nextDueDate);
+  let guard = 0;
+  while (d < start && guard < 5000) { d = adv(d); guard++; }
+  let c = 0;
+  while (d <= end && guard < 5000) {
+    if (rule.endDate && d > new Date(rule.endDate)) break;
+    c++; d = adv(d); guard++;
+  }
+  return c;
+}
+
 export async function handleIncomingMessage(
   text: string,
   sendReply: (message: string) => Promise<void>,
@@ -508,6 +529,100 @@ export async function handleIncomingMessage(
     return { success: true, count: txs.length };
   }
 
+  // ── INTENT: query_payments (o que tenho a pagar em tal mês) ──
+  if (parsed.intent === 'query_payments') {
+    const now = new Date();
+    const ahead = parsed.targetMonth ? monthsUntil(parsed.targetMonth, now) : 1; // default "mês que vem"
+    const target = new Date(now.getFullYear(), now.getMonth() + ahead, 1);
+    const year = target.getFullYear();
+    const m0 = target.getMonth();
+    const start = new Date(year, m0, 1);
+    const end = new Date(year, m0 + 1, 0, 23, 59, 59, 999);
+    const monthLabel = `${MONTH_NAMES[m0]}/${year}`;
+
+    // 1) Faturas de cartão que vencem nesse mês (ainda não pagas)
+    const creditTx = await prisma.transaction.findMany({
+      where: { workspaceId: workspace.id, creditCardId: { not: null }, paidAt: null, dueDate: { gte: start, lte: end } },
+    });
+    const byCard = new Map<string, number>();
+    for (const t of creditTx) {
+      const k = t.creditCardId as string;
+      byCard.set(k, (byCard.get(k) ?? 0) + Number(t.amount));
+    }
+
+    // 2) Recorrentes: receita entra na base (p/ dízimo) e despesas vão para a lista
+    const rules = await prisma.recurringRule.findMany({ where: { workspaceId: workspace.id, active: true } });
+    let incomeBase = 0;
+    const recExpenses: { desc: string; amount: number }[] = [];
+    for (const r of rules) {
+      const n = recurrenceCountInMonth(r, start, end);
+      if (n === 0) continue;
+      const total = Number(r.amount) * n;
+      if (r.type === 'INCOME') incomeBase += total;
+      else recExpenses.push({ desc: r.description, amount: total });
+    }
+
+    // 3) Eventos pontuais do mês
+    const events = await prisma.plannedEvent.findMany({
+      where: { workspaceId: workspace.id, realized: false, expectedAt: { gte: start, lte: end } },
+    });
+    const eventExpenses: { desc: string; amount: number }[] = [];
+    for (const e of events) {
+      if (e.type === 'INCOME') incomeBase += Number(e.amount);
+      else eventExpenses.push({ desc: e.description, amount: Number(e.amount) });
+    }
+
+    // 4) Proporcionais à renda (ex.: dízimo = 10% da renda do mês)
+    const proRules = await prisma.proportionalRule.findMany({ where: { workspaceId: workspace.id, active: true } });
+    const proExpenses = proRules.map((p: any) => ({
+      desc: `${p.description} (${Math.round(Number(p.percent) * 100)}%)`,
+      amount: Number(p.percent) * incomeBase,
+    }));
+
+    // 5) Parcelas (não-crédito) que caem no mês e ainda não foram pagas
+    const installmentTx = await prisma.transaction.findMany({
+      where: { workspaceId: workspace.id, type: 'EXPENSE', creditCardId: null, paidAt: null, installmentGroup: { not: null }, occurredAt: { gte: start, lte: end } },
+    });
+
+    let total = 0;
+    let msg = `📅 *A pagar em ${monthLabel}*\n`;
+
+    if (byCard.size > 0) {
+      msg += `\n💳 *Faturas de cartão:*\n`;
+      for (const [cardId, amount] of byCard) {
+        const card = creditCards.find((c: any) => c.id === cardId);
+        const venc = card ? ` (vence dia ${card.billingDay})` : '';
+        msg += `  • ${card?.name ?? 'Cartão'}: ${fmt(amount)}${venc}\n`;
+        total += amount;
+      }
+    }
+
+    if (recExpenses.length > 0 || proExpenses.length > 0) {
+      msg += `\n🔄 *Recorrentes/fixos:*\n`;
+      for (const r of recExpenses) { msg += `  • ${r.desc}: ${fmt(r.amount)}\n`; total += r.amount; }
+      for (const p of proExpenses) { msg += `  • ${p.desc}: ${fmt(p.amount)}\n`; total += p.amount; }
+    }
+
+    if (installmentTx.length > 0) {
+      msg += `\n🛒 *Parcelas:*\n`;
+      for (const t of installmentTx) { msg += `  • ${t.description}: ${fmt(Number(t.amount))}\n`; total += Number(t.amount); }
+    }
+
+    if (eventExpenses.length > 0) {
+      msg += `\n📌 *Outros:*\n`;
+      for (const e of eventExpenses) { msg += `  • ${e.desc}: ${fmt(e.amount)}\n`; total += e.amount; }
+    }
+
+    if (total === 0) {
+      await sendReply(`📅 *${monthLabel}*\n\n🎉 Nada previsto a pagar nesse mês.`);
+      return { success: true, total: 0 };
+    }
+
+    msg += `\n💰 *Total a pagar: ${fmt(total)}*`;
+    await sendReply(msg);
+    return { success: true, total };
+  }
+
   // ── INTENT: query_summary ──
   if (parsed.intent === 'query_summary') {
     const now = new Date();
@@ -641,6 +756,9 @@ export async function handleIncomingMessage(
       `  "remove o último lançamento"\n\n` +
       `🧾 *Últimos lançamentos*\n` +
       `  "o que registrei essa semana?"\n\n` +
+      `💸 *O que tenho a pagar*\n` +
+      `  "quanto tenho que pagar mês que vem?"\n` +
+      `  "o que vence em junho?"\n\n` +
       `📊 *Consultas*\n` +
       `  "quanto gastei esse mês?"\n` +
       `  "gastos com alimentação"\n` +

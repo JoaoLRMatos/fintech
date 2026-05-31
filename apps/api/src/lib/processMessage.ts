@@ -15,6 +15,7 @@ export type MessageIntent =
   | 'query_projection'
   | 'query_safe_to_spend'
   | 'query_recent'
+  | 'query_payments'
   | 'help'
   | 'unknown';
 
@@ -61,7 +62,7 @@ ${cardsInfo}
 Analise a mensagem do usuário e retorne APENAS um JSON (sem markdown, sem texto extra) com esta estrutura:
 
 {
-  "intent": "register_transaction" | "register_installment" | "register_recurring" | "register_planned_event" | "simulate_purchase" | "pay_invoice" | "delete_transaction" | "query_summary" | "query_category" | "query_balance" | "query_projection" | "query_safe_to_spend" | "query_recent" | "help" | "unknown",
+  "intent": "register_transaction" | "register_installment" | "register_recurring" | "register_planned_event" | "simulate_purchase" | "pay_invoice" | "delete_transaction" | "query_summary" | "query_category" | "query_balance" | "query_projection" | "query_safe_to_spend" | "query_recent" | "query_payments" | "help" | "unknown",
   "type": "income" | "expense",
   "amount": number | null,
   "description": "descrição curta do gasto/receita",
@@ -112,6 +113,11 @@ REGRAS DE CLASSIFICAÇÃO DE INTENT:
 
 6c. **query_recent**: Usuário quer ver os ÚLTIMOS lançamentos registrados.
    Exemplos: "últimos lançamentos", "o que registrei hoje?", "mostra meus gastos recentes", "lista as últimas transações"
+
+6d. **query_payments**: Usuário quer saber o que TEM A PAGAR / o que VENCE num mês (faturas de cartão + recorrentes/fixos).
+   Palavras-chave: "quanto tenho que pagar", "o que tenho que pagar", "o que vence", "contas de", "minhas contas".
+   Exemplos: "quanto tenho que pagar mês que vem?", "o que tenho que pagar em junho?", "contas de junho", "o que vence esse mês?"
+   → Preencha "targetMonth" (1-12). Para "mês que vem"/"próximo mês", use o número do PRÓXIMO mês. Para "esse mês", use o mês atual.
 
 7. **query_summary**: Pergunta sobre resumo financeiro geral do período.
    Exemplos: "quanto gastei esse mês?", "resumo do mês", "como estão minhas finanças?", "gastos de abril"
