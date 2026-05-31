@@ -97,6 +97,53 @@ export function currentPayableInvoice(card: CardCycleInput, ref = new Date()): {
   return { year: d.getFullYear(), month: d.getMonth() + 1 };
 }
 
+/**
+ * Janela de fatura pelo mês de VENCIMENTO (pagamento).
+ * Ex: se vence dia 10/07, o usuário navega para "Julho" e vê as compras que fecharam em Junho.
+ */
+export function billWindowByDueMonth(card: CardCycleInput, dueYear: number, dueMonth1to12: number): {
+  start: Date;
+  end: Date;
+  dueDate: Date;
+} {
+  let closeYear = dueYear;
+  let closeMonth1to12: number;
+
+  if (card.billingDay <= card.closingDay) {
+    // vencimento é no mês SEGUINTE ao fechamento → fechamento = mês anterior ao vencimento
+    closeMonth1to12 = dueMonth1to12 - 1;
+    if (closeMonth1to12 < 1) { closeMonth1to12 = 12; closeYear -= 1; }
+  } else {
+    // vencimento é no MESMO mês do fechamento
+    closeMonth1to12 = dueMonth1to12;
+  }
+
+  return billWindow(card, closeYear, closeMonth1to12);
+}
+
+/**
+ * Próximo vencimento da fatura a partir de uma data de referência.
+ * Retorna o mês/ano de vencimento (não o de fechamento).
+ */
+export function nextUpcomingDueMonth(card: CardCycleInput, ref = new Date()): {
+  year: number;
+  month: number; // 1-12, mês do VENCIMENTO
+  dueDate: Date;
+} {
+  const y = ref.getFullYear();
+  const m = ref.getMonth();
+
+  // Tenta o vencimento deste mês
+  const thisDue = makeDate(y, m, card.billingDay);
+  if (thisDue > ref) {
+    return { year: y, month: m + 1, dueDate: thisDue };
+  }
+
+  // Próximo mês
+  const nextDue = makeDate(y, m + 1, card.billingDay);
+  return { year: nextDue.getFullYear(), month: nextDue.getMonth() + 1, dueDate: nextDue };
+}
+
 export function fmtDate(d: Date): string {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }

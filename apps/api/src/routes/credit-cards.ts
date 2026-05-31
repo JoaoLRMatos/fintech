@@ -1,17 +1,29 @@
-import type { FastifyInstance } from 'fastify';
+﻿import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { billWindow } from '../lib/creditCard.js';
+import { billWindowByDueMonth, nextUpcomingDueMonth } from '../lib/creditCard.js';
 
 export async function creditCardRoutes(app: FastifyInstance) {
   app.addHook('preHandler', app.authenticate);
 
-  // LIST
+  // LIST -- inclui limite usado, disponivel e proximo vencimento
   app.get('/api/credit-cards', async (request) => {
     const { workspaceId } = request.user as { workspaceId: string };
-    return prisma.creditCard.findMany({
-      where: { workspaceId },
-      orderBy: { name: 'asc' },
+    const [cards, usedGroups] = await Promise.all([
+      prisma.creditCard.findMany({ where: { workspaceId }, orderBy: { name: 'asc' } }),
+      prisma.transaction.groupBy({
+        by: ['creditCardId'],
+        where: { workspaceId, paymentMethod: 'credit', paidAt: null, creditCardId: { not: null } },
+        _sum: { amount: true },
+      }),
+    ]);
+
+    return cards.map(card => {
+      const used = usedGroups.find(g => g.creditCardId === card.id);
+      const usedAmount = Number(used?._sum.amount ?? 0);
+      const availableLimit = card.limit ? Math.max(0, card.limit - usedAmount) : null;
+      const next = nextUpcomingDueMonth(card);
+      return { ...card, usedAmount, availableLimit, nextDueMonth: next.month, nextDueYear: next.year, nextDueDate: next.dueDate };
     });
   });
 
@@ -40,7 +52,7 @@ export async function creditCardRoutes(app: FastifyInstance) {
     }).parse(request.body);
 
     const existing = await prisma.creditCard.findFirst({ where: { id, workspaceId } });
-    if (!existing) throw new Error('Cartão não encontrado.');
+    if (!existing) throw new Error('Cartao nao encontrado.');
 
     return prisma.creditCard.update({ where: { id }, data: body });
   });
@@ -51,32 +63,30 @@ export async function creditCardRoutes(app: FastifyInstance) {
     const { id } = z.object({ id: z.string() }).parse(request.params);
 
     const existing = await prisma.creditCard.findFirst({ where: { id, workspaceId } });
-    if (!existing) throw new Error('Cartão não encontrado.');
+    if (!existing) throw new Error('Cartao nao encontrado.');
 
     await prisma.creditCard.delete({ where: { id } });
     return { success: true };
   });
 
-  // GET bill for a specific month  — GET /api/credit-cards/:id/bill?year=2025&month=5
+  // GET bill -- year/month sao o MES DE VENCIMENTO (pagamento)
+  // Ex.: ?year=2026&month=7 -> fatura que vence em 10/07 (compras de junho)
   app.get('/api/credit-cards/:id/bill', async (request) => {
     const { workspaceId } = request.user as { workspaceId: string };
     const { id } = z.object({ id: z.string() }).parse(request.params);
+    const now = new Date();
     const { year, month } = z.object({
-      year: z.coerce.number().default(new Date().getFullYear()),
-      month: z.coerce.number().min(1).max(12).default(new Date().getMonth() + 1),
+      year: z.coerce.number().default(now.getFullYear()),
+      month: z.coerce.number().min(1).max(12).default(now.getMonth() + 1),
     }).parse(request.query);
 
     const card = await prisma.creditCard.findFirst({ where: { id, workspaceId } });
-    if (!card) throw new Error('Cartão não encontrado.');
+    if (!card) throw new Error('Cartao nao encontrado.');
 
-    const { start, end, dueDate } = billWindow(card, year, month);
+    const { start, end, dueDate } = billWindowByDueMonth(card, year, month);
 
     const transactions = await prisma.transaction.findMany({
-      where: {
-        workspaceId,
-        creditCardId: id,
-        occurredAt: { gte: start, lte: end },
-      },
+      where: { workspaceId, creditCardId: id, occurredAt: { gte: start, lte: end } },
       include: { category: true },
       orderBy: { occurredAt: 'desc' },
     });
@@ -85,18 +95,10 @@ export async function creditCardRoutes(app: FastifyInstance) {
     const paidTotal = transactions.filter(t => t.paidAt).reduce((s, t) => s + Number(t.amount), 0);
     const isPaid = transactions.length > 0 && transactions.every(t => t.paidAt);
 
-    return {
-      card,
-      period: { start, end },
-      dueDate,
-      transactions,
-      total,
-      paidTotal,
-      isPaid,
-    };
+    return { card, period: { start, end }, dueDate, dueMonth: { year, month }, transactions, total, paidTotal, isPaid };
   });
 
-  // PAY bill — POST /api/credit-cards/:id/pay-bill  { year, month }
+  // PAY bill -- { year, month } sao o mes de VENCIMENTO
   app.post('/api/credit-cards/:id/pay-bill', async (request) => {
     const { workspaceId } = request.user as { workspaceId: string };
     const { id } = z.object({ id: z.string() }).parse(request.params);
@@ -107,9 +109,9 @@ export async function creditCardRoutes(app: FastifyInstance) {
     }).parse(request.body);
 
     const card = await prisma.creditCard.findFirst({ where: { id, workspaceId } });
-    if (!card) throw new Error('Cartão não encontrado.');
+    if (!card) throw new Error('Cartao nao encontrado.');
 
-    const { start, end, dueDate } = billWindow(card, year, month);
+    const { start, end, dueDate } = billWindowByDueMonth(card, year, month);
 
     const txs = await prisma.transaction.findMany({
       where: { workspaceId, creditCardId: id, paidAt: null, occurredAt: { gte: start, lte: end } },
@@ -122,7 +124,7 @@ export async function creditCardRoutes(app: FastifyInstance) {
       data: { paidAt: new Date() },
     });
 
-    // Debita o total da conta (a fatura só impacta o saldo ao ser paga)
+    // Debita da conta (o saldo impacta so ao pagar a fatura)
     const account = accountId
       ? await prisma.account.findFirst({ where: { id: accountId, workspaceId } })
       : await prisma.account.findFirst({ where: { workspaceId } });
