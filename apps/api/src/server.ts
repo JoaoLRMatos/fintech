@@ -51,7 +51,7 @@ app.decorate('authenticate', async (request: any, reply: any) => {
   }
 });
 
-app.get('/health', async () => ({ ok: true, service: 'finance-api' }));
+app.get('/health', () => ({ ok: true, service: 'finance-api', timestamp: new Date().toISOString() }));
 
 // Twilio envia webhooks como application/x-www-form-urlencoded
 app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) => {
