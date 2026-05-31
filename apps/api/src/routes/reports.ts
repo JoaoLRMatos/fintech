@@ -42,26 +42,32 @@ export async function reportRoutes(app: FastifyInstance) {
       const label = start.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
       const key = `${year}-${String(month).padStart(2, '0')}`;
 
-      const [incAgg, expAgg, transactions] = await Promise.all([
-        prisma.transaction.aggregate({
-          where: { workspaceId, type: 'INCOME', occurredAt: { gte: start, lte: end } },
-          _sum: { amount: true },
-        }),
-        prisma.transaction.aggregate({
-          where: { workspaceId, type: 'EXPENSE', occurredAt: { gte: start, lte: end } },
-          _sum: { amount: true },
-        }),
-        prisma.transaction.findMany({
-          where: { workspaceId, occurredAt: { gte: start, lte: end } },
-          include: { category: true, account: true, creditCard: true },
-          orderBy: { occurredAt: 'desc' },
-        }),
-      ]);
+      // Busca todas as transações, depois filtra pelo campo correto:
+      // - cartão de crédito pendente: usa dueDate (quando vai sair do bolso)
+      // - demais: usa occurredAt
+      const allTx = await prisma.transaction.findMany({
+        where: {
+          workspaceId,
+          OR: [
+            // débito / manual: data do lançamento dentro do mês
+            { paymentMethod: { not: 'credit' }, occurredAt: { gte: start, lte: end } },
+            { paymentMethod: null, occurredAt: { gte: start, lte: end } },
+            // crédito: vencimento da fatura dentro do mês
+            { paymentMethod: 'credit', dueDate: { gte: start, lte: end } },
+          ],
+        },
+        include: { category: true, account: true, creditCard: true },
+        orderBy: { occurredAt: 'desc' },
+      });
 
-      const income = Number(incAgg._sum.amount ?? 0);
-      const expense = Number(expAgg._sum.amount ?? 0);
+      let income = 0;
+      let expense = 0;
+      for (const tx of allTx) {
+        if (tx.type === 'INCOME') income += Number(tx.amount);
+        else if (tx.type === 'EXPENSE') expense += Number(tx.amount);
+      }
 
-      result.push({ key, label, year, month, income, expense, balance: income - expense, isProjection: false, transactions });
+      result.push({ key, label, year, month, income, expense, balance: income - expense, isProjection: false, transactions: allTx });
     }
 
     // ── Meses futuros (projeção com saldo acumulado) ──
@@ -111,17 +117,27 @@ export async function reportRoutes(app: FastifyInstance) {
       const end = new Date(year, m + 1, 0, 23, 59, 59);
       const label = start.toLocaleDateString('pt-BR', { month: 'short' });
 
-      const [inc, exp] = await Promise.all([
-        prisma.transaction.aggregate({ where: { workspaceId, type: 'INCOME', occurredAt: { gte: start, lte: end } }, _sum: { amount: true } }),
-        prisma.transaction.aggregate({ where: { workspaceId, type: 'EXPENSE', occurredAt: { gte: start, lte: end } }, _sum: { amount: true } }),
-      ]);
-
-      months.push({
-        month: label,
-        monthIndex: m + 1,
-        income: Number(inc._sum.amount ?? 0),
-        expense: Number(exp._sum.amount ?? 0),
+      // Mesmo critério: crédito usa dueDate, demais usam occurredAt
+      const allTx = await prisma.transaction.findMany({
+        where: {
+          workspaceId,
+          OR: [
+            { paymentMethod: { not: 'credit' }, occurredAt: { gte: start, lte: end } },
+            { paymentMethod: null, occurredAt: { gte: start, lte: end } },
+            { paymentMethod: 'credit', dueDate: { gte: start, lte: end } },
+          ],
+        },
+        select: { amount: true, type: true },
       });
+
+      let income = 0;
+      let expense = 0;
+      for (const tx of allTx) {
+        if (tx.type === 'INCOME') income += Number(tx.amount);
+        else if (tx.type === 'EXPENSE') expense += Number(tx.amount);
+      }
+
+      months.push({ month: label, monthIndex: m + 1, income, expense });
     }
 
     const totalIncome = months.reduce((s, m) => s + m.income, 0);
