@@ -13,6 +13,7 @@ export function TransactionsPage() {
   const [editing, setEditing] = useState<any>(null);
   const [typeFilter, setTypeFilter] = useState('');
   const [page, setPage] = useState(1);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
 
   const params: Record<string, string> = { page: String(page), limit: '20' };
   if (typeFilter) params.type = typeFilter;
@@ -231,7 +232,7 @@ export function TransactionsPage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button onClick={() => startEdit(tx)} className="mr-2 rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-200"><Pencil className="h-3.5 w-3.5" /></button>
-                    <button onClick={() => { if (window.confirm('Excluir este lançamento?')) deleteMut.mutate(tx.id); }} className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-rose-400"><Trash2 className="h-3.5 w-3.5" /></button>
+                    <button onClick={() => setDeleteTarget(tx)} className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-rose-400"><Trash2 className="h-3.5 w-3.5" /></button>
                   </td>
                 </tr>
               ))}
@@ -274,7 +275,7 @@ export function TransactionsPage() {
                   <button onClick={() => startEdit(tx)} className="flex items-center gap-1.5 rounded bg-slate-800 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700">
                     <Pencil className="h-3 w-3" /> Editar
                   </button>
-                  <button onClick={() => { if (window.confirm('Excluir este lançamento?')) deleteMut.mutate(tx.id); }} className="flex items-center gap-1.5 rounded bg-slate-800/50 px-3 py-1.5 text-xs text-slate-400 hover:bg-rose-950/20 hover:text-rose-400">
+                  <button onClick={() => setDeleteTarget(tx)} className="flex items-center gap-1.5 rounded bg-slate-800/50 px-3 py-1.5 text-xs text-slate-400 hover:bg-rose-950/20 hover:text-rose-400">
                     <Trash2 className="h-3 w-3" /> Excluir
                   </button>
                 </div>
@@ -291,6 +292,50 @@ export function TransactionsPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl space-y-5 animate-in fade-in duration-200">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-rose-500/10 text-rose-500 mx-auto">
+              <Trash2 className="h-5 w-5" />
+            </div>
+            <div className="text-center space-y-2">
+              <h3 className="text-lg font-semibold text-slate-100">Excluir lançamento</h3>
+              <p className="text-sm text-slate-400">
+                Tem certeza que deseja excluir <span className="font-semibold text-slate-200">"{deleteTarget.description}"</span>?
+              </p>
+              <p className="text-xs text-slate-500">
+                Esta ação removerá permanentemente o lançamento no valor de{' '}
+                <span className={`font-semibold ${deleteTarget.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {deleteTarget.type === 'INCOME' ? '+' : '-'} {fmt(Number(deleteTarget.amount))}
+                </span>
+                .
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  deleteMut.mutate(deleteTarget.id);
+                  setDeleteTarget(null);
+                }}
+                disabled={deleteMut.isPending}
+                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white hover:bg-rose-500 transition-colors shadow-lg shadow-rose-900/20 disabled:opacity-50"
+              >
+                {deleteMut.isPending ? 'Excluindo...' : 'Sim, excluir'}
+              </button>
+              <button
+                type="button"
+                disabled={deleteMut.isPending}
+                onClick={() => setDeleteTarget(null)}
+                className="flex-1 rounded-lg border border-slate-700 bg-slate-800/40 py-2.5 text-sm font-semibold text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
