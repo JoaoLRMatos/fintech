@@ -2,10 +2,11 @@ const API = import.meta.env.VITE_API_URL || 'http://localhost:3333';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = localStorage.getItem('auth_token');
+  const hasBody = !!options?.body;
   const res = await fetch(`${API}${path}`, {
     credentials: 'include',
     headers: {
-      'Content-Type': 'application/json',
+      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },
