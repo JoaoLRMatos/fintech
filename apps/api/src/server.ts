@@ -78,10 +78,11 @@ await app.register(importRoutes);
 
 app.setErrorHandler((error: Error, _request, reply) => {
   if (error.name === 'ZodError') {
-    return reply.status(400).send({ error: 'Dados inválidos.', details: error });
+    app.log.error(error);
+    return reply.status(400).send({ error: 'Dados inválidos.', details: (error as any).issues || error, message: error.message });
   }
   app.log.error(error);
-  return reply.status(500).send({ error: 'Erro interno do servidor.' });
+  return reply.status(500).send({ error: error.message || 'Erro interno do servidor.' });
 });
 
 const port = Number(process.env.PORT || 3333);
