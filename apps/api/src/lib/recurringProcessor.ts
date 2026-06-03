@@ -1,4 +1,5 @@
 import { prisma } from './prisma.js';
+import { getFifthBusinessDayOfMonth } from './businessDays.js';
 
 export async function processRecurringRules() {
   const now = new Date();
@@ -45,20 +46,27 @@ export async function processRecurringRules() {
     }
 
     // Calcula próxima data
-    const next = new Date(rule.nextDueDate);
-    switch (rule.frequency) {
-      case 'DAILY':
-        next.setDate(next.getDate() + 1);
-        break;
-      case 'WEEKLY':
-        next.setDate(next.getDate() + 7);
-        break;
-      case 'MONTHLY':
-        next.setMonth(next.getMonth() + 1);
-        break;
-      case 'YEARLY':
-        next.setFullYear(next.getFullYear() + 1);
-        break;
+    let next: Date;
+    if (rule.isFifthBusinessDay && rule.frequency === 'MONTHLY') {
+      const nextMonth = new Date(rule.nextDueDate);
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+      next = getFifthBusinessDayOfMonth(nextMonth.getFullYear(), nextMonth.getMonth());
+    } else {
+      next = new Date(rule.nextDueDate);
+      switch (rule.frequency) {
+        case 'DAILY':
+          next.setDate(next.getDate() + 1);
+          break;
+        case 'WEEKLY':
+          next.setDate(next.getDate() + 7);
+          break;
+        case 'MONTHLY':
+          next.setMonth(next.getMonth() + 1);
+          break;
+        case 'YEARLY':
+          next.setFullYear(next.getFullYear() + 1);
+          break;
+      }
     }
 
     // Desativa se passou da data final

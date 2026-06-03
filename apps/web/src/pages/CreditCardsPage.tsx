@@ -67,34 +67,15 @@ export function CreditCardsPage() {
 
   const createMut = useMutation({
     mutationFn: api.creditCards.create,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['credit-cards'] });
-      setShowForm(false);
-    },
-    onError: (err: any) => {
-      alert(`Erro ao criar cartão de crédito: ${err.message}`);
-    }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['credit-cards'] }); setShowForm(false); },
   });
   const updateMut = useMutation({
     mutationFn: ({ id, data }: any) => api.creditCards.update(id, data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['credit-cards'] });
-      setEditing(null);
-    },
-    onError: (err: any) => {
-      alert(`Erro ao atualizar cartão de crédito: ${err.message}`);
-    }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['credit-cards'] }); setEditing(null); },
   });
   const deleteMut = useMutation({
     mutationFn: api.creditCards.delete,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['credit-cards'] });
-      setSelectedCard(null);
-      setBillMonth(null);
-    },
-    onError: (err: any) => {
-      alert(`Erro ao excluir cartão de crédito: ${err.message}`);
-    }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['credit-cards'] }); setSelectedCard(null); setBillMonth(null); },
   });
   const payBillMut = useMutation({
     mutationFn: () => api.creditCards.payBill(selectedCard!, activeBillMonth!.year, activeBillMonth!.month),
@@ -103,9 +84,6 @@ export function CreditCardsPage() {
       qc.invalidateQueries({ queryKey: ['credit-cards'] });
       qc.invalidateQueries({ queryKey: ['accounts'] });
     },
-    onError: (err: any) => {
-      alert(`Erro ao pagar fatura: ${err.message}`);
-    }
   });
 
   function prevMonth() {

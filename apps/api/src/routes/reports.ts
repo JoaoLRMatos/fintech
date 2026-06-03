@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { projectMonths, currentBalance } from '../lib/projectionEngine.js';
+import { processRecurringRules } from '../lib/recurringProcessor.js';
 
 export async function reportRoutes(app: FastifyInstance) {
   app.addHook('preHandler', app.authenticate);
@@ -13,6 +14,10 @@ export async function reportRoutes(app: FastifyInstance) {
    */
   app.get('/api/reports/monthly', async (request) => {
     const { workspaceId } = request.user as { workspaceId: string };
+    
+    // Processa regras pendentes para garantir dados sempre atualizados!
+    await processRecurringRules().catch((err) => app.log.error(err, 'Erro ao processar recorrentes em tempo real (relatório)'));
+
     const { pastMonths, futureMonths } = z.object({
       pastMonths: z.coerce.number().min(1).max(36).default(6),
       futureMonths: z.coerce.number().min(0).max(12).default(3),

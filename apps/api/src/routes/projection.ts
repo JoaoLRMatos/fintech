@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { projectMonths, simulatePurchase } from '../lib/projectionEngine.js';
 import { buildInsights, computeSafeToSpend } from '../lib/insightsEngine.js';
+import { processRecurringRules } from '../lib/recurringProcessor.js';
 
 export async function projectionRoutes(app: FastifyInstance) {
   app.addHook('preHandler', app.authenticate);
@@ -9,6 +10,10 @@ export async function projectionRoutes(app: FastifyInstance) {
   /** Projeção do saldo acumulado dos próximos N meses. */
   app.get('/api/projection', async (request) => {
     const { workspaceId } = request.user as { workspaceId: string };
+    
+    // Processa regras recorrentes pendentes em tempo real!
+    await processRecurringRules().catch((err) => app.log.error(err, 'Erro ao processar recorrentes em tempo real (projeção)'));
+
     const { months } = z.object({ months: z.coerce.number().min(1).max(24).default(6) }).parse(request.query);
     return projectMonths(workspaceId, { horizon: months, startOffset: 1 });
   });
@@ -16,6 +21,10 @@ export async function projectionRoutes(app: FastifyInstance) {
   /** Insights inteligentes (risco, comprometimento, sobra, limite saudável). */
   app.get('/api/insights', async (request) => {
     const { workspaceId } = request.user as { workspaceId: string };
+
+    // Processa regras recorrentes pendentes em tempo real!
+    await processRecurringRules().catch((err) => app.log.error(err, 'Erro ao processar recorrentes em tempo real (insights)'));
+
     const { months, reserve } = z.object({
       months: z.coerce.number().min(1).max(24).default(6),
       reserve: z.coerce.number().min(0).default(0),

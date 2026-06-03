@@ -18,7 +18,7 @@ export function RecurringPage() {
   const qc = useQueryClient();
   const { data: rules, isLoading } = useQuery({ queryKey: ['recurring'], queryFn: api.recurring.list });
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10) });
+  const [form, setForm] = useState({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10), isFifthBusinessDay: false });
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const createMut = useMutation({
@@ -47,7 +47,7 @@ export function RecurringPage() {
     }
   });
 
-  function resetForm() { setForm({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10) }); }
+  function resetForm() { setForm({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10), isFifthBusinessDay: false }); }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -57,6 +57,7 @@ export function RecurringPage() {
       type: form.type as 'INCOME' | 'EXPENSE',
       frequency: form.frequency as any,
       nextDueDate: form.nextDueDate,
+      isFifthBusinessDay: form.frequency === 'MONTHLY' ? form.isFifthBusinessDay : false,
     });
   }
 
@@ -100,10 +101,34 @@ export function RecurringPage() {
             </div>
           </div>
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs text-slate-400">Próximo vencimento</label>
-              <input type="date" value={form.nextDueDate} onChange={e => setForm(f => ({ ...f, nextDueDate: e.target.value }))} required className={inputCls} />
-            </div>
+            {!form.isFifthBusinessDay && (
+              <div>
+                <label className="mb-1 block text-xs text-slate-400">
+                  {form.type === 'INCOME' ? 'Próximo recebimento' : 'Próximo vencimento'}
+                </label>
+                <input
+                  type="date"
+                  value={form.nextDueDate}
+                  onChange={e => setForm(f => ({ ...f, nextDueDate: e.target.value }))}
+                  required
+                  className={inputCls}
+                />
+              </div>
+            )}
+            {form.frequency === 'MONTHLY' && (
+              <div className="flex items-center gap-2.5 pt-6">
+                <input
+                  type="checkbox"
+                  id="isFifthBusinessDay"
+                  checked={form.isFifthBusinessDay}
+                  onChange={e => setForm(f => ({ ...f, isFifthBusinessDay: e.target.checked }))}
+                  className="rounded border-slate-700 bg-slate-800 text-emerald-500 focus:ring-emerald-500 h-4 w-4 cursor-pointer"
+                />
+                <label htmlFor="isFifthBusinessDay" className="text-sm font-medium text-slate-300 cursor-pointer select-none">
+                  Smart: Receber / Pagar no 5º dia útil do mês (salários, etc.)
+                </label>
+              </div>
+            )}
           </div>
           <div className="flex gap-2">
             <button type="submit" disabled={createMut.isPending} className="flex-1 sm:flex-none rounded-lg bg-emerald-600 px-6 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50 text-center">
@@ -134,6 +159,9 @@ export function RecurringPage() {
                   <p className="font-medium text-slate-100 truncate">{r.description}</p>
                   <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-slate-500 mt-1">
                     <span className="font-medium bg-slate-800 px-1.5 py-0.5 rounded text-[10px] text-slate-400 uppercase">{freqLabels[r.frequency] || r.frequency}</span>
+                    {r.isFifthBusinessDay && (
+                      <span className="font-semibold bg-emerald-500/15 px-1.5 py-0.5 rounded text-[10px] text-emerald-400 uppercase tracking-wide">5º Dia Útil Smart</span>
+                    )}
                     <span className="flex items-center gap-1">
                       <CalendarClock className="h-3 w-3 text-slate-500" />
                       Próx: {new Date(r.nextDueDate).toLocaleDateString('pt-BR')}

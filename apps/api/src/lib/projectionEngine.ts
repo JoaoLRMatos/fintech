@@ -1,4 +1,5 @@
 import { prisma } from './prisma.js';
+import { getFifthBusinessDayOfMonth } from './businessDays.js';
 
 /**
  * Motor de projeção financeira.
@@ -64,7 +65,12 @@ function monthWindow(base: Date, offset: number) {
   };
 }
 
-function advance(date: Date, frequency: string): Date {
+function advanceRule(date: Date, frequency: string, isFifthBusinessDay?: boolean): Date {
+  if (isFifthBusinessDay && frequency === 'MONTHLY') {
+    const nextMonth = new Date(date);
+    nextMonth.setMonth(nextMonth.getMonth() + 1);
+    return getFifthBusinessDayOfMonth(nextMonth.getFullYear(), nextMonth.getMonth());
+  }
   const d = new Date(date);
   if (frequency === 'DAILY') d.setDate(d.getDate() + 1);
   else if (frequency === 'WEEKLY') d.setDate(d.getDate() + 7);
@@ -75,16 +81,16 @@ function advance(date: Date, frequency: string): Date {
 }
 
 /** Quantas vezes uma regra recorrente dispara dentro de [start, end]. */
-function recurrencesInWindow(nextDueDate: Date, frequency: string, endDate: Date | null, start: Date, end: Date): number {
+function recurrencesInWindow(nextDueDate: Date, frequency: string, endDate: Date | null, start: Date, end: Date, isFifthBusinessDay?: boolean): number {
   let d = new Date(nextDueDate);
   // adianta até a janela
   let guard = 0;
-  while (d < start && guard < 5000) { d = advance(d, frequency); guard++; }
+  while (d < start && guard < 5000) { d = advanceRule(d, frequency, isFifthBusinessDay); guard++; }
   let count = 0;
   while (d <= end && guard < 5000) {
     if (endDate && d > endDate) break;
     count++;
-    d = advance(d, frequency);
+    d = advanceRule(d, frequency, isFifthBusinessDay);
     guard++;
   }
   return count;
@@ -188,7 +194,7 @@ export async function projectMonths(workspaceId: string, input: ProjectInput = {
     let recurringExpense = 0;
     let fixed = 0;
     for (const r of rules) {
-      const n = recurrencesInWindow(new Date(r.nextDueDate), r.frequency, r.endDate ?? null, w.start, w.end);
+      const n = recurrencesInWindow(new Date(r.nextDueDate), r.frequency, r.endDate ?? null, w.start, w.end, !!r.isFifthBusinessDay);
       if (n === 0) continue;
       const total = Number(r.amount) * n;
       if (r.type === 'INCOME') recurringIncome += total;
