@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { prisma } from './prisma.js';
-import { processWhatsAppMessage } from './processMessage.js';
+import { processAgentMessage } from './processMessage.js';
 import { projectMonths, simulatePurchase } from './projectionEngine.js';
 import { computeSafeToSpend } from './insightsEngine.js';
 import { invoiceForPurchase, fmtDate } from './creditCard.js';
@@ -10,19 +10,10 @@ const MONTH_NAMES = [
   'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
 ];
 
-/** Quantos meses à frente está o próximo mês-alvo (1-12). 0 se for o mês atual. */
-function monthsUntil(targetMonth: number, from = new Date()): number {
-  const cur = from.getMonth() + 1;
-  let diff = targetMonth - cur;
-  if (diff < 0) diff += 12;
-  return diff;
+function brl(v: number): string {
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-/**
- * Resolve a data do lançamento a partir do ISO "YYYY-MM-DD" que a IA extraiu
- * ("ontem", "dia 28"...). Usa meio-dia local para evitar problemas de fuso.
- * Sem data → agora. Datas futuras absurdas (> hoje) são aceitas mas raras.
- */
 function resolveOccurredAt(iso: string | null): Date {
   if (!iso) return new Date();
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso.trim());
@@ -31,135 +22,8 @@ function resolveOccurredAt(iso: string | null): Date {
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
-/** True se a data não é de hoje (lançamento retroativo/futuro). */
-function isDifferentDay(d: Date, ref = new Date()): boolean {
-  return d.getFullYear() !== ref.getFullYear() || d.getMonth() !== ref.getMonth() || d.getDate() !== ref.getDate();
-}
-
-/** Quantas vezes uma regra recorrente dispara dentro de [start, end]. */
-function recurrenceCountInMonth(rule: any, start: Date, end: Date): number {
-  const adv = (x: Date) => {
-    const n = new Date(x);
-    if (rule.frequency === 'DAILY') n.setDate(n.getDate() + 1);
-    else if (rule.frequency === 'WEEKLY') n.setDate(n.getDate() + 7);
-    else if (rule.frequency === 'YEARLY') n.setFullYear(n.getFullYear() + 1);
-    else n.setMonth(n.getMonth() + 1);
-    return n;
-  };
-  let d = new Date(rule.nextDueDate);
-  let guard = 0;
-  while (d < start && guard < 5000) { d = adv(d); guard++; }
-  let c = 0;
-  while (d <= end && guard < 5000) {
-    if (rule.endDate && d > new Date(rule.endDate)) break;
-    c++; d = adv(d); guard++;
-  }
-  return c;
-}
-
-function brl(v: number): string {
-  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-}
-
-// Contexto leve por chat: lembra o mês da última consulta de "a pagar" p/ o "detalhar".
-const lastPaymentsContext = new Map<string, { year: number; month: number }>();
-
-interface PaymentItem { desc: string; amount: number; type?: string }
-interface CardBucket { name: string; billingDay: number; net: number; items: PaymentItem[] }
-
-/** Junta tudo que há a pagar num mês: faturas (por cartão), recorrentes, dízimo, parcelas e eventos. */
-async function gatherPayments(workspaceId: string, year: number, month: number) {
-  const m0 = month - 1;
-  const start = new Date(year, m0, 1);
-  const end = new Date(year, m0 + 1, 0, 23, 59, 59, 999);
-
-  const [creditTxRaw, rules, events, proRules, instRaw, cards] = await Promise.all([
-    prisma.transaction.findMany({ where: { workspaceId, creditCardId: { not: null }, dueDate: { gte: start, lte: end } } }),
-    prisma.recurringRule.findMany({ where: { workspaceId, active: true } }),
-    prisma.plannedEvent.findMany({ where: { workspaceId, realized: false, expectedAt: { gte: start, lte: end } } }),
-    prisma.proportionalRule.findMany({ where: { workspaceId, active: true } }),
-    prisma.transaction.findMany({ where: { workspaceId, type: 'EXPENSE', creditCardId: null, installmentGroup: { not: null }, occurredAt: { gte: start, lte: end } } }),
-    prisma.creditCard.findMany({ where: { workspaceId } }),
-  ]);
-
-  // Faturas por cartão (líquido: estorno subtrai)
-  const cardMap = new Map<string, CardBucket>();
-  for (const t of creditTxRaw) {
-    if (t.paidAt) continue;
-    const card = cards.find((c: any) => c.id === t.creditCardId);
-    const key = t.creditCardId as string;
-    if (!cardMap.has(key)) cardMap.set(key, { name: card?.name ?? 'Cartão', billingDay: card?.billingDay ?? 0, net: 0, items: [] });
-    const e = cardMap.get(key)!;
-    e.items.push({ desc: t.description, amount: Number(t.amount), type: t.type });
-    e.net += t.type === 'INCOME' ? -Number(t.amount) : Number(t.amount);
-  }
-
-  // Recorrentes (receita vira base do dízimo)
-  let incomeBase = 0;
-  const recExpenses: PaymentItem[] = [];
-  for (const r of rules) {
-    const n = recurrenceCountInMonth(r, start, end);
-    if (n === 0) continue;
-    const tot = Number(r.amount) * n;
-    if (r.type === 'INCOME') incomeBase += tot;
-    else recExpenses.push({ desc: r.description, amount: tot });
-  }
-
-  // Eventos pontuais
-  const eventExpenses: PaymentItem[] = [];
-  for (const ev of events) {
-    if (ev.type === 'INCOME') incomeBase += Number(ev.amount);
-    else eventExpenses.push({ desc: ev.description, amount: Number(ev.amount) });
-  }
-
-  // Proporcionais (dízimo)
-  const proExpenses: PaymentItem[] = proRules.map((p: any) => ({
-    desc: `${p.description} (${Math.round(Number(p.percent) * 100)}%)`,
-    amount: Number(p.percent) * incomeBase,
-  }));
-
-  // Parcelas não-crédito
-  const installments: PaymentItem[] = instRaw.filter((t: any) => !t.paidAt).map((t: any) => ({ desc: t.description, amount: Number(t.amount) }));
-
-  return { cardMap, recExpenses, proExpenses, installments, eventExpenses };
-}
-
-/** Renderiza o "a pagar" do mês. `detailed` abre os itens de cada fatura de cartão. */
-function renderPayments(data: Awaited<ReturnType<typeof gatherPayments>>, monthLabel: string, detailed: boolean): { msg: string; total: number } {
-  let total = 0;
-  let msg = `📅 *A pagar em ${monthLabel}*\n`;
-
-  const cards = [...data.cardMap.values()].filter(c => c.net > 0.005);
-  if (cards.length > 0) {
-    msg += `\n💳 *Faturas de cartão:*\n`;
-    for (const c of cards) {
-      msg += `  • ${c.name}: ${brl(c.net)} (vence dia ${c.billingDay})\n`;
-      total += c.net;
-      if (detailed) {
-        for (const it of c.items) {
-          const isCredit = it.type === 'INCOME';
-          msg += `      ${isCredit ? '↩️' : '·'} ${it.desc}: ${isCredit ? '-' : ''}${brl(it.amount)}\n`;
-        }
-      }
-    }
-  }
-
-  if (data.recExpenses.length > 0 || data.proExpenses.length > 0) {
-    msg += `\n🔄 *Recorrentes/fixos:*\n`;
-    for (const r of data.recExpenses) { msg += `  • ${r.desc}: ${brl(r.amount)}\n`; total += r.amount; }
-    for (const p of data.proExpenses) { msg += `  • ${p.desc}: ${brl(p.amount)}\n`; total += p.amount; }
-  }
-  if (data.installments.length > 0) {
-    msg += `\n🛒 *Parcelas:*\n`;
-    for (const t of data.installments) { msg += `  • ${t.desc}: ${brl(t.amount)}\n`; total += t.amount; }
-  }
-  if (data.eventExpenses.length > 0) {
-    msg += `\n📌 *Outros:*\n`;
-    for (const e of data.eventExpenses) { msg += `  • ${e.desc}: ${brl(e.amount)}\n`; total += e.amount; }
-  }
-
-  return { msg, total };
-}
+// Global in-memory chat histories (last 10 turns)
+const chatHistories = new Map<string, { role: 'user' | 'assistant'; content: string }[]>();
 
 export async function handleIncomingMessage(
   text: string,
@@ -172,715 +36,387 @@ export async function handleIncomingMessage(
   });
 
   if (!workspace) {
-    await sendReply('❌ Nenhum workspace configurado.');
-    return { success: false, error: 'Nenhum workspace configurado.' };
+    const errorMsg = '❌ Nenhum workspace configurado.';
+    await sendReply(errorMsg);
+    return { success: false, error: errorMsg };
   }
 
-  // Captura o chat p/ permitir alertas proativos (Telegram).
+  // Capture chat/Telegram
   if (chatId !== undefined && String(chatId) !== (workspace as any).telegramChatId) {
     await prisma.workspace.update({ where: { id: workspace.id }, data: { telegramChatId: String(chatId) } }).catch(() => {});
   }
 
-  const categoryNames = workspace.categories.map((c: { name: string }) => c.name);
-  const creditCardList = (workspace as any).creditCards?.map((c: any) => ({ id: c.id, name: c.name })) ?? [];
-  const parsed = await processWhatsAppMessage(text, categoryNames, creditCardList);
-  const account = workspace.accounts[0];
-  const creditCards = (workspace as any).creditCards ?? [];
-  const defaultCard = creditCards[0] ?? null;
+  const ctxKey = String(chatId ?? 'default');
+  const now = new Date();
 
-  function findCreditCard() {
-    if (!parsed.creditCardHint) return defaultCard;
-    const hint = parsed.creditCardHint.toLowerCase();
-    return creditCards.find((c: any) =>
-      c.name.toLowerCase().includes(hint) || hint.includes(c.name.toLowerCase())
-    ) ?? defaultCard;
-  }
+  // 1. Gather all contextual data for the Agent System Prompt
 
-  function findCategory(name: string) {
-    return workspace!.categories.find((c: { name: string }) =>
-      c.name.toLowerCase() === name.toLowerCase()
-    );
-  }
-
-  function fmt(v: number) {
-    return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-  }
-
-  // ── INTENT: register_transaction ──
-  if (parsed.intent === 'register_transaction') {
-    if (!parsed.amount) {
-      await sendReply('❌ Não consegui identificar o valor. Tente: "250 gasolina"');
-      return { success: false };
-    }
-
-    const category = findCategory(parsed.category);
-    const txType = parsed.type === 'income' ? 'INCOME' as const : 'EXPENSE' as const;
-    const isCredit = parsed.paymentMethod === 'credit';
-    const isDebit = parsed.paymentMethod === 'debit';
-    const matchedCard = findCreditCard();
-    const occurredAt = resolveOccurredAt(parsed.occurredAt); // data informada ("ontem") ou hoje
-
-    let dueDate: Date | null = null;
-    let closingDate: Date | null = null;
-    let creditCardId: string | null = null;
-    if (isCredit && matchedCard) {
-      // Usa a DATA DA COMPRA (pode ser retroativa) para decidir em qual fatura cai.
-      const cycle = invoiceForPurchase(matchedCard, occurredAt);
-      dueDate = cycle.dueDate;
-      closingDate = cycle.closingDate;
-      creditCardId = matchedCard.id;
-    } else if (isCredit) {
-      dueDate = new Date(occurredAt.getFullYear(), occurredAt.getMonth() + 1, 10);
-    }
-
-    const tx = await prisma.transaction.create({
-      data: {
-        type: txType,
-        amount: parsed.amount,
-        description: parsed.description,
-        occurredAt,
-        source: 'telegram',
-        paymentMethod: parsed.paymentMethod,
-        dueDate,
-        creditCardId,
-        workspaceId: workspace.id,
-        categoryId: category?.id ?? null,
-        accountId: isCredit ? null : (account?.id ?? null),
-      },
+  // Credit Card cycle statuses
+  let creditCardsStatus = '';
+  for (const card of workspace.creditCards) {
+    const unpaid = await prisma.transaction.findMany({
+      where: { workspaceId: workspace.id, creditCardId: card.id, paidAt: null },
     });
-
-    if (!isCredit && account) {
-      const delta = parsed.type === 'income' ? parsed.amount : -parsed.amount;
-      await prisma.account.update({ where: { id: account.id }, data: { balance: { increment: delta } } });
-    }
-
-    const emoji = parsed.type === 'income' ? '💰' : (isCredit ? '💳' : '💸');
-    let msg = `${emoji} Registrado: ${fmt(parsed.amount)} — ${parsed.description} (${parsed.category})`;
-    if (isDifferentDay(occurredAt)) {
-      msg += `\n📆 Lançado em ${fmtDate(occurredAt)}`;
-    }
-    if (isCredit) {
-      const cardName = matchedCard?.name ?? parsed.creditCardHint ?? 'cartão';
-      if (matchedCard && closingDate && dueDate) {
-        msg += `\n💳 *${cardName}*`;
-        msg += `\n🔒 Entra na fatura que fecha em ${fmtDate(closingDate)}`;
-        msg += `\n📅 Vencimento: ${fmtDate(dueDate)}`;
-      } else {
-        const venc = dueDate ? dueDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' }) : 'dia 10 do próximo mês';
-        msg += `\n💳 Fatura: ${cardName} — vencimento: ${venc}`;
-        msg += `\n💡 Dica: cadastre o cartão (com dia de fechamento e vencimento) para o controle automático da fatura.`;
+    const invoicesMap = new Map<string, number>();
+    for (const ut of unpaid) {
+      if (ut.dueDate) {
+        const mLabel = `${MONTH_NAMES[ut.dueDate.getMonth()]}/${ut.dueDate.getFullYear()}`;
+        const val = ut.type === 'INCOME' ? -Number(ut.amount) : Number(ut.amount);
+        invoicesMap.set(mLabel, (invoicesMap.get(mLabel) ?? 0) + val);
       }
-    } else if (isDebit) {
-      msg += `\n🏦 Lançado como débito — saldo atualizado.`;
     }
-    await sendReply(msg);
-    return { success: true, transaction: tx };
+    creditCardsStatus += `💳 Card: "${card.name}" (ID: ${card.id})\n`;
+    if (invoicesMap.size === 0) {
+      creditCardsStatus += `  - Fatura em aberto limpa.\n`;
+    } else {
+      for (const [mLabel, total] of invoicesMap.entries()) {
+        creditCardsStatus += `  - Fatura vencimento ${mLabel}: R$ ${total.toFixed(2)}\n`;
+      }
+    }
   }
 
-  // ── INTENT: register_installment ──
-  if (parsed.intent === 'register_installment') {
-    if (!parsed.amount || !parsed.installments || parsed.installments < 2) {
-      await sendReply('❌ Não entendi o parcelamento. Tente: "200 em 6x tênis"');
-      return { success: false };
+  // Monthly breakdown summary
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+  const [incomeAgg, expenseAgg, catBreakdown] = await Promise.all([
+    prisma.transaction.aggregate({
+      where: { workspaceId: workspace.id, type: 'INCOME', occurredAt: { gte: startOfMonth, lte: endOfMonth } },
+      _sum: { amount: true },
+    }),
+    prisma.transaction.aggregate({
+      where: { workspaceId: workspace.id, type: 'EXPENSE', occurredAt: { gte: startOfMonth, lte: endOfMonth } },
+      _sum: { amount: true },
+    }),
+    prisma.transaction.groupBy({
+      by: ['categoryId'],
+      where: { workspaceId: workspace.id, type: 'EXPENSE', occurredAt: { gte: startOfMonth, lte: endOfMonth } },
+      _sum: { amount: true },
+      orderBy: { _sum: { amount: 'desc' } },
+    }),
+  ]);
+
+  const incomeTot = Number(incomeAgg._sum.amount ?? 0);
+  const expenseTot = Number(expenseAgg._sum.amount ?? 0);
+  let monthSummary = `Resumo de ${MONTH_NAMES[now.getMonth()]}/${now.getFullYear()}\n`;
+  monthSummary += `- Receitas: R$ ${incomeTot.toFixed(2)}\n`;
+  monthSummary += `- Despesas: R$ ${expenseTot.toFixed(2)}\n`;
+  monthSummary += `- Saldo: R$ ${(incomeTot - expenseTot).toFixed(2)}\n`;
+  if (catBreakdown.length > 0) {
+    monthSummary += `Gastos por categoria:\n`;
+    for (const cb of catBreakdown) {
+      const cat = workspace.categories.find(c => c.id === cb.categoryId);
+      monthSummary += `  - ${cat?.name ?? 'Sem categoria'}: R$ ${Number(cb._sum.amount ?? 0).toFixed(2)}\n`;
     }
+  }
 
-    const category = findCategory(parsed.category);
-    const installmentAmount = Math.round((parsed.amount / parsed.installments) * 100) / 100;
-    const groupId = randomUUID();
-    const baseDate = resolveOccurredAt(parsed.occurredAt); // 1ª parcela na data informada (ou hoje)
-    const txs = [];
-    const isCredit = parsed.paymentMethod === 'credit';
-    const matchedCard = findCreditCard();
+  // Recent 15 transactions
+  const recentTxs = await prisma.transaction.findMany({
+    where: { workspaceId: workspace.id },
+    orderBy: [{ createdAt: 'desc' }, { occurredAt: 'desc' }],
+    take: 15,
+  });
+  let recentTransactionsList = '';
+  for (const rx of recentTxs) {
+    const dateStr = rx.occurredAt.toISOString().split('T')[0];
+    const instTxt = rx.installmentGroup ? ` (Parc. ${rx.installmentCurrent}/${rx.installmentTotal}, Grupo ID: ${rx.installmentGroup})` : '';
+    const details = rx.creditCardId ? `Cartão ID: ${rx.creditCardId}` : (rx.accountId ? `Conta ID: ${rx.accountId}` : 'Sem vínculo');
+    recentTransactionsList += `- ID: ${rx.id} | Data: ${dateStr} | Desc: "${rx.description}" | Valor: R$ ${Number(rx.amount).toFixed(2)} | Tipo: ${rx.type} | PG: ${rx.paymentMethod || 'débito'} | ${details}${instTxt}\n`;
+  }
 
-    for (let i = 0; i < parsed.installments; i++) {
-      const date = new Date(baseDate);
-      date.setMonth(date.getMonth() + i);
+  // History memory
+  const history = chatHistories.get(ctxKey) || [];
 
-      let dueDate: Date | null = null;
-      let creditCardId: string | null = null;
-      if (isCredit && matchedCard) {
-        const cycle = invoiceForPurchase(matchedCard, date);
-        dueDate = cycle.dueDate;
-        creditCardId = matchedCard.id;
-      }
+  const cards = workspace.creditCards.map(c => ({ id: c.id, name: c.name, billingDay: c.billingDay, closingDay: c.closingDay }));
+  const cats = workspace.categories.map(c => ({ id: c.id, name: c.name }));
+  const accounts = workspace.accounts.map(a => ({ id: a.id, name: a.name, balance: a.balance }));
 
-      const tx = await prisma.transaction.create({
-        data: {
-          type: 'EXPENSE',
-          amount: installmentAmount,
-          description: `${parsed.description} (${i + 1}/${parsed.installments})`,
-          occurredAt: date,
-          status: isCredit ? 'CONFIRMED' : (i === 0 ? 'CONFIRMED' : 'SCHEDULED'),
-          source: 'telegram',
-          paymentMethod: parsed.paymentMethod,
-          dueDate,
-          creditCardId,
-          installmentGroup: groupId,
-          installmentCurrent: i + 1,
-          installmentTotal: parsed.installments,
-          workspaceId: workspace.id,
-          categoryId: category?.id ?? null,
-          accountId: isCredit ? null : (account?.id ?? null),
-        },
-      });
-      txs.push(tx);
-    }
+  // Call Agent
+  const response = await processAgentMessage(
+    text,
+    cats,
+    accounts,
+    cards,
+    creditCardsStatus,
+    monthSummary,
+    recentTransactionsList,
+    history,
+  );
 
-    if (!isCredit && account) {
-      await prisma.account.update({ where: { id: account.id }, data: { balance: { increment: -installmentAmount } } });
-    }
-
-    // Mostra o impacto futuro da compra (o diferencial: ver o futuro antes/depois de gastar)
-    let impacto = '';
+  // 2. Execute Actions Sequence
+  for (const act of response.actions) {
     try {
-      const proj = await projectMonths(workspace.id, { horizon: parsed.installments });
-      const neg = proj.find(m => m.closingBalance < 0);
-      if (neg) {
-        impacto = `\n⚠️ Atenção: seu saldo previsto fica negativo em *${neg.label}* (${fmt(neg.closingBalance)}).`;
-      } else {
-        impacto = `\n🔮 Saldo segue positivo nos próximos meses. ✅`;
+      if (act.action === 'create_transaction') {
+        const isCredit = act.paymentMethod === 'credit';
+        const matchedCard = act.creditCardId ? workspace.creditCards.find(c => c.id === act.creditCardId) : null;
+        const occurredAt = resolveOccurredAt(act.occurredAt || null);
+
+        let dueDate: Date | null = null;
+        let creditCardId = matchedCard?.id ?? null;
+
+        if (isCredit && matchedCard) {
+          const cycle = invoiceForPurchase(matchedCard, occurredAt);
+          dueDate = cycle.dueDate;
+        } else if (isCredit) {
+          dueDate = new Date(occurredAt.getFullYear(), occurredAt.getMonth() + 1, 10);
+        }
+
+        const actType = act.type === 'INCOME' ? 'INCOME' as const : 'EXPENSE' as const;
+
+        await prisma.transaction.create({
+          data: {
+            type: actType,
+            amount: act.amount ?? 0,
+            description: act.description || 'Lançamento',
+            occurredAt,
+            source: 'agent',
+            paymentMethod: act.paymentMethod || 'debit',
+            dueDate,
+            creditCardId,
+            workspaceId: workspace.id,
+            categoryId: act.categoryId || null,
+            accountId: isCredit ? null : (workspace.accounts[0]?.id ?? null),
+          },
+        });
+
+        if (!isCredit && workspace.accounts[0]) {
+          const delta = actType === 'INCOME' ? (act.amount ?? 0) : -(act.amount ?? 0);
+          await prisma.account.update({
+            where: { id: workspace.accounts[0].id },
+            data: { balance: { increment: delta } },
+          });
+        }
       }
-    } catch { /* projeção é best-effort */ }
 
-    let replyMsg = `🛒 Parcelamento registrado!\n` +
-      `${parsed.description}: ${fmt(parsed.amount)} em ${parsed.installments}x de ${fmt(installmentAmount)}\n`;
+      if (act.action === 'create_installment') {
+        if (!act.amount || !act.installments || act.installments < 2) {
+          continue;
+        }
+        const installmentAmount = Math.round((act.amount / act.installments) * 100) / 100;
+        const groupId = randomUUID();
+        const baseDate = resolveOccurredAt(act.occurredAt || null);
+        const matchedCard = act.creditCardId ? workspace.creditCards.find(c => c.id === act.creditCardId) : null;
+        const isCredit = act.paymentMethod === 'credit' || !!matchedCard;
 
-    if (isCredit && matchedCard) {
-      const firstCycle = invoiceForPurchase(matchedCard, baseDate);
-      const lastDate = new Date(baseDate);
-      lastDate.setMonth(lastDate.getMonth() + parsed.installments - 1);
-      const lastCycle = invoiceForPurchase(matchedCard, lastDate);
-      replyMsg += `💳 Cartão: *${matchedCard.name}*\n` +
-                  `📅 Fatura de vencimento inicial: ${fmtDate(firstCycle.dueDate)}\n` +
-                  `📅 Fatura de vencimento final: ${fmtDate(lastCycle.dueDate)}\n`;
-    } else {
-      replyMsg += `Parcelas lançadas de ${baseDate.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })} ` +
-                  `até ${txs[txs.length - 1].occurredAt.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })}\n`;
-    }
-    replyMsg += impacto;
-    await sendReply(replyMsg);
-    return { success: true, installments: txs.length };
-  }
+        for (let i = 0; i < act.installments; i++) {
+          const date = new Date(baseDate);
+          date.setMonth(date.getMonth() + i);
 
-  // ── INTENT: register_recurring ──
-  if (parsed.intent === 'register_recurring') {
-    if (!parsed.amount) {
-      await sendReply('❌ Não consegui identificar o valor. Tente: "netflix todo mês 40"');
-      return { success: false };
-    }
+          let dueDate: Date | null = null;
+          let creditCardId: string | null = null;
+          if (isCredit && matchedCard) {
+            const cycle = invoiceForPurchase(matchedCard, date);
+            dueDate = cycle.dueDate;
+            creditCardId = matchedCard.id;
+          }
 
-    const category = findCategory(parsed.category);
-    const txType = parsed.type === 'income' ? 'INCOME' as const : 'EXPENSE' as const;
-    const now = new Date();
-    const day = parsed.dayOfMonth && parsed.dayOfMonth >= 1 && parsed.dayOfMonth <= 31
-      ? parsed.dayOfMonth
-      : now.getDate();
+          await prisma.transaction.create({
+            data: {
+              type: 'EXPENSE',
+              amount: installmentAmount,
+              description: `${act.description || 'Parcelado'} (${i + 1}/${act.installments})`,
+              occurredAt: date,
+              status: isCredit ? 'CONFIRMED' : (i === 0 ? 'CONFIRMED' : 'SCHEDULED'),
+              source: 'agent',
+              paymentMethod: isCredit ? 'credit' : 'debit',
+              dueDate,
+              creditCardId,
+              installmentGroup: groupId,
+              installmentCurrent: i + 1,
+              installmentTotal: act.installments,
+              workspaceId: workspace.id,
+              categoryId: act.categoryId || null,
+              accountId: isCredit ? null : (workspace.accounts[0]?.id ?? null),
+            },
+          });
+        }
 
-    const rule = await prisma.recurringRule.create({
-      data: {
-        type: txType,
-        amount: parsed.amount,
-        description: parsed.description,
-        frequency: parsed.frequency || 'MONTHLY',
-        dayOfMonth: day,
-        nextDueDate: new Date(now.getFullYear(), now.getMonth() + 1, day),
-        workspaceId: workspace.id,
-        categoryId: category?.id ?? null,
-        accountId: account?.id ?? null,
-      },
-    });
-
-    await prisma.transaction.create({
-      data: {
-        type: txType,
-        amount: parsed.amount,
-        description: parsed.description,
-        occurredAt: now,
-        source: `recurring:${rule.id}:${now.toISOString().slice(0, 10)}`,
-        workspaceId: workspace.id,
-        categoryId: category?.id ?? null,
-        accountId: account?.id ?? null,
-      },
-    });
-
-    if (account) {
-      const delta = parsed.type === 'income' ? parsed.amount : -parsed.amount;
-      await prisma.account.update({ where: { id: account.id }, data: { balance: { increment: delta } } });
-    }
-
-    const freqLabel = { DAILY: 'diário', WEEKLY: 'semanal', MONTHLY: 'mensal', YEARLY: 'anual' }[parsed.frequency || 'MONTHLY'];
-    const emoji = parsed.type === 'income' ? '💰' : '🔄';
-    await sendReply(
-      `${emoji} Recorrência criada!\n` +
-      `${parsed.description}: ${fmt(parsed.amount)} (${freqLabel})\n` +
-      `Categoria: ${parsed.category}\n` +
-      `Primeira transação registrada. Próxima: dia ${rule.nextDueDate.getDate()} de cada mês.`
-    );
-    return { success: true, recurringRule: rule };
-  }
-
-  // ── INTENT: register_planned_event (receita/despesa pontual futura) ──
-  if (parsed.intent === 'register_planned_event') {
-    if (!parsed.amount) {
-      await sendReply('❌ Não consegui identificar o valor. Tente: "vou receber 13º em dezembro 2500"');
-      return { success: false };
-    }
-    const category = findCategory(parsed.category);
-    const now = new Date();
-    const ahead = parsed.targetMonth ? monthsUntil(parsed.targetMonth, now) : 1;
-    const monthIdx = (now.getMonth() + ahead) % 12;
-    const year = now.getFullYear() + Math.floor((now.getMonth() + ahead) / 12);
-    const expectedAt = new Date(year, monthIdx, 15);
-
-    const event = await prisma.plannedEvent.create({
-      data: {
-        type: parsed.type === 'income' ? 'INCOME' : 'EXPENSE',
-        amount: parsed.amount,
-        description: parsed.description,
-        expectedAt,
-        categoryId: category?.id ?? null,
-        workspaceId: workspace.id,
-      },
-    });
-
-    const emoji = parsed.type === 'income' ? '💰' : '📌';
-    await sendReply(
-      `${emoji} Evento futuro registrado!\n` +
-      `${parsed.description}: ${fmt(parsed.amount)} previsto para *${MONTH_NAMES[monthIdx]} de ${year}*.\n` +
-      `🔮 Já incluí na sua projeção de saldo.`
-    );
-    return { success: true, plannedEvent: event };
-  }
-
-  // ── INTENT: simulate_purchase ("posso comprar?") ──
-  if (parsed.intent === 'simulate_purchase') {
-    if (!parsed.amount) {
-      await sendReply('❌ Não entendi o valor da compra. Tente: "posso comprar uma TV de 3600 em 12x?"');
-      return { success: false };
-    }
-    const installments = parsed.installments && parsed.installments >= 1 ? parsed.installments : 1;
-    const sim = await simulatePurchase(
-      workspace.id,
-      { total: parsed.amount, installments, description: parsed.description },
-      { horizon: 12 },
-    );
-
-    const baseAvg = sim.base.reduce((s, m) => s + m.saldoMes, 0) / (sim.base.length || 1);
-    const newAvg = sim.withPurchase.reduce((s, m) => s + m.saldoMes, 0) / (sim.withPurchase.length || 1);
-    const parcelaTxt = installments > 1 ? `${installments}x de ${fmt(sim.perInstallment)}` : 'à vista';
-
-    let msg = `🔮 *Simulação* — ${parsed.description}: ${fmt(parsed.amount)} (${parcelaTxt})\n\n`;
-    msg += `Sobra média/mês: ${fmt(baseAvg)} → ${fmt(newAvg)}\n`;
-    msg += `Comprometimento máx. da renda: ${Math.round(sim.maxCommittedRatio * 100)}%\n\n`;
-    if (sim.affordable) {
-      msg += `✅ Cabe no seu orçamento — o saldo nunca fica negativo.`;
-    } else {
-      msg += `⚠️ Não recomendado: seu saldo fica negativo em *${sim.firstNegativeMonth!.label}* (${fmt(sim.firstNegativeMonth!.closingBalance)}).`;
-      if (installments < 18) msg += `\n💡 Dica: diluir em mais parcelas reduz o impacto mensal.`;
-    }
-    await sendReply(msg);
-    return { success: true, simulation: { affordable: sim.affordable } };
-  }
-
-  // ── INTENT: query_projection (saldo futuro) ──
-  if (parsed.intent === 'query_projection') {
-    const now = new Date();
-    let horizon = parsed.horizonMonths && parsed.horizonMonths >= 1 ? parsed.horizonMonths : 6;
-    if (parsed.targetMonth) horizon = Math.max(1, monthsUntil(parsed.targetMonth, now));
-    horizon = Math.min(horizon, 12);
-
-    const proj = await projectMonths(workspace.id, { horizon });
-    if (parsed.targetMonth) {
-      const target = proj[proj.length - 1];
-      let msg = `📈 *Saldo previsto — ${target.label}*\n\n`;
-      msg += `Entradas: ${fmt(target.income)}\n`;
-      msg += `Saídas: ${fmt(target.expense)}\n`;
-      msg += `Saldo acumulado: ${fmt(target.closingBalance)} ${target.closingBalance < 0 ? '🔴' : '✅'}`;
-      await sendReply(msg);
-    } else {
-      let msg = `📈 *Projeção dos próximos ${proj.length} meses*\n\n`;
-      for (const m of proj) {
-        const icon = m.closingBalance < 0 ? '🔴' : '🟢';
-        msg += `${icon} ${m.label}: ${fmt(m.closingBalance)}\n`;
+        if (!isCredit && workspace.accounts[0]) {
+          await prisma.account.update({
+            where: { id: workspace.accounts[0].id },
+            data: { balance: { increment: -installmentAmount } },
+          });
+        }
       }
-      const avg = proj.reduce((s, m) => s + m.saldoMes, 0) / (proj.length || 1);
-      msg += `\nSobra média prevista: ${fmt(avg)}/mês`;
-      await sendReply(msg);
-    }
-    return { success: true };
-  }
 
-  // ── INTENT: query_safe_to_spend (limite saudável) ──
-  if (parsed.intent === 'query_safe_to_spend') {
-    const safe = await computeSafeToSpend(workspace.id);
-    let msg = `💡 *Limite saudável de gasto*\n\n`;
-    if (safe.amount > 0) {
-      msg += `Você pode gastar *${fmt(safe.amount)}* livremente até o fim do mês.\n\n`;
-    } else {
-      msg += `⚠️ Sem margem livre este mês (faltam ${fmt(Math.abs(safe.amount))} para os compromissos).\n\n`;
-    }
-    msg += `Saldo hoje: ${fmt(safe.currentBalance)}\n`;
-    msg += `+ entradas a receber: ${fmt(safe.remainingIncome)}\n`;
-    msg += `− compromissos restantes: ${fmt(safe.remainingCommitted)}`;
-    await sendReply(msg);
-    return { success: true, safeToSpend: safe.amount };
-  }
+      if (act.action === 'update_transaction') {
+        if (!act.transactionId) continue;
+        const existingTx = await prisma.transaction.findUnique({
+          where: { id: act.transactionId },
+        });
+        if (!existingTx) continue;
 
-  // ── INTENT: pay_invoice ("paguei o cartão BB") ──
-  if (parsed.intent === 'pay_invoice') {
-    const card = findCreditCard();
-    if (!card) {
-      await sendReply('❌ Não identifiquei o cartão. Cadastre seus cartões e tente: "paguei o cartão BB".');
-      return { success: false };
-    }
-    // Busca todos os lançamentos do cartão e filtra "não pagos" em JS
-    // (Prisma+MongoDB não casa paidAt:null com campo ausente).
-    const all = await prisma.transaction.findMany({
-      where: { workspaceId: workspace.id, creditCardId: card.id },
-    });
-    const unpaid: any[] = all.filter((t: any) => !t.paidAt && t.dueDate);
+        const originalAmount = Number(existingTx.amount);
+        const originalType = existingTx.type;
+        const originalAccountId = existingTx.accountId;
+        const originalCreditCardId = existingTx.creditCardId;
 
-    if (unpaid.length === 0) {
-      await sendReply(`✅ Nenhuma fatura em aberto no *${card.name}*.`);
-      return { success: true, paid: 0 };
-    }
+        if (existingTx.installmentGroup) {
+          const groupTxs = await prisma.transaction.findMany({
+            where: { installmentGroup: existingTx.installmentGroup, workspaceId: workspace.id },
+            orderBy: { installmentCurrent: 'asc' },
+          });
 
-    // Paga a fatura mais próxima (menor data de vencimento em aberto)
-    unpaid.sort((a: any, b: any) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
-    const firstDue = new Date(unpaid[0].dueDate);
-    const invoice = unpaid.filter((t: any) => {
-      const d = new Date(t.dueDate);
-      return d.getFullYear() === firstDue.getFullYear() && d.getMonth() === firstDue.getMonth();
-    });
+          const baseDate = act.occurredAt ? resolveOccurredAt(act.occurredAt) : null;
+          const matchedCard = act.creditCardId ? workspace.creditCards.find(c => c.id === act.creditCardId) : (originalCreditCardId ? workspace.creditCards.find(c => c.id === originalCreditCardId) : null);
+          const isCredit = act.paymentMethod === 'credit' || (act.paymentMethod !== 'debit' && !!matchedCard);
 
-    // Líquido: estornos (INCOME) reduzem o valor a pagar.
-    const total = invoice.reduce((s: number, t: any) => s + (t.type === 'INCOME' ? -Number(t.amount) : Number(t.amount)), 0);
-    await prisma.transaction.updateMany({
-      where: { id: { in: invoice.map((t: any) => t.id) } },
-      data: { paidAt: new Date() },
-    });
-    if (account) {
-      await prisma.account.update({ where: { id: account.id }, data: { balance: { increment: -total } } });
-    }
+          for (const gTx of groupTxs) {
+            const idxDiff = (gTx.installmentCurrent ?? 1) - (existingTx.installmentCurrent ?? 1);
+            const updateData: any = {};
 
-    await sendReply(
-      `✅ Fatura do *${card.name}* paga!\n` +
-      `💰 Total: ${fmt(total)} (${invoice.length} ${invoice.length === 1 ? 'lançamento' : 'lançamentos'})\n` +
-      `📅 Vencimento: ${fmtDate(firstDue)}\n` +
-      `🏦 Saldo da conta atualizado.`
-    );
-    return { success: true, paid: total };
-  }
+            if (baseDate) {
+              const itemDate = new Date(baseDate);
+              itemDate.setMonth(itemDate.getMonth() + idxDiff);
+              updateData.occurredAt = itemDate;
 
-  // ── INTENT: delete_transaction ("exclui o lanche de 40 de ontem") ──
-  if (parsed.intent === 'delete_transaction') {
-    const since = new Date();
-    since.setDate(since.getDate() - 120);
-    const candidates = await prisma.transaction.findMany({
-      where: { workspaceId: workspace.id, occurredAt: { gte: since } },
-      orderBy: { createdAt: 'desc' },
-      take: 80,
-    });
+              if (isCredit && matchedCard) {
+                const cycle = invoiceForPurchase(matchedCard, itemDate);
+                updateData.dueDate = cycle.dueDate;
+              }
+            } else if (act.creditCardId !== undefined && isCredit && matchedCard) {
+              const cycle = invoiceForPurchase(matchedCard, gTx.occurredAt);
+              updateData.dueDate = cycle.dueDate;
+            }
 
-    if (candidates.length === 0) {
-      await sendReply('🤷 Não há lançamentos recentes para excluir.');
-      return { success: false };
-    }
+            if (act.amount !== undefined) {
+              updateData.amount = act.amount;
+            }
+            if (act.description !== undefined) {
+              let newDesc = act.description;
+              if (gTx.installmentCurrent && gTx.installmentTotal) {
+                newDesc = `${act.description.replace(/\s\(\d+\/\d+\)$/, '')} (${gTx.installmentCurrent}/${gTx.installmentTotal})`;
+              }
+              updateData.description = newDesc;
+            }
+            if (act.categoryId !== undefined) updateData.categoryId = act.categoryId;
+            if (act.creditCardId !== undefined) updateData.creditCardId = act.creditCardId;
+            if (act.paymentMethod !== undefined) updateData.paymentMethod = act.paymentMethod;
 
-    // "último/última" → remove o mais recente (opcionalmente filtrando por descrição)
-    const wantsLast = /\bultim|\búltim/i.test(text);
-    const wantAmount = parsed.amount;
-    const rawDesc = (parsed.description || '').toLowerCase().trim();
-    const STOP = ['ultimo', 'último', 'ultima', 'última', 'last', 'lançamento', 'lancamento', 'gasto', 'transação', 'transacao'];
-    const wantDesc = STOP.includes(rawDesc) ? '' : rawDesc;
-    const wantDay = parsed.occurredAt ? resolveOccurredAt(parsed.occurredAt) : null;
+            await prisma.transaction.update({
+              where: { id: gTx.id },
+              data: updateData,
+            });
+          }
+        } else {
+          const updateData: any = {};
+          const occurredAt = act.occurredAt ? resolveOccurredAt(act.occurredAt) : existingTx.occurredAt;
 
-    let best: any = null;
-    if (wantsLast && wantAmount == null) {
-      const pool = (wantDesc && wantDesc.length >= 3)
-        ? candidates.filter((t: any) => t.description.toLowerCase().includes(wantDesc))
-        : candidates;
-      best = pool[0] ?? candidates[0]; // candidates já vem por createdAt desc
-    } else {
-      let bestScore = 0;
-      for (const t of candidates) {
-        let score = 0;
-        if (wantAmount != null && Math.abs(Number(t.amount) - wantAmount) < 0.01) score += 2;
-        if (wantDesc && wantDesc.length >= 3 && t.description.toLowerCase().includes(wantDesc)) score += 2;
-        if (wantDay && !isDifferentDay(t.occurredAt, wantDay)) score += 1;
-        if (score > bestScore) { bestScore = score; best = t; }
+          if (act.occurredAt !== undefined) updateData.occurredAt = occurredAt;
+          if (act.amount !== undefined) updateData.amount = act.amount;
+          if (act.description !== undefined) updateData.description = act.description;
+          if (act.categoryId !== undefined) updateData.categoryId = act.categoryId;
+          if (act.paymentMethod !== undefined) updateData.paymentMethod = act.paymentMethod;
+          if (act.creditCardId !== undefined) updateData.creditCardId = act.creditCardId;
+
+          const matchedCard = act.creditCardId ? workspace.creditCards.find(c => c.id === act.creditCardId) : (existingTx.creditCardId ? workspace.creditCards.find(c => c.id === existingTx.creditCardId) : null);
+          const isCredit = act.paymentMethod === 'credit' || (act.paymentMethod !== 'debit' && !!matchedCard);
+
+          if (isCredit && matchedCard) {
+            const cycle = invoiceForPurchase(matchedCard, occurredAt);
+            updateData.dueDate = cycle.dueDate;
+            updateData.accountId = null;
+          } else if (act.paymentMethod === 'debit') {
+            updateData.dueDate = null;
+            updateData.creditCardId = null;
+            updateData.accountId = workspace.accounts[0]?.id ?? null;
+          }
+
+          await prisma.transaction.update({
+            where: { id: existingTx.id },
+            data: updateData,
+          });
+
+          // Revert balance adjustments
+          if (originalAccountId && workspace.accounts[0]) {
+            const revertDelta = originalType === 'INCOME' ? -originalAmount : originalAmount;
+            await prisma.account.update({
+              where: { id: workspace.accounts[0].id },
+              data: { balance: { increment: revertDelta } },
+            });
+          }
+
+          if (!isCredit && workspace.accounts[0]) {
+            const newAmount = act.amount !== undefined ? act.amount : originalAmount;
+            const newType = existingTx.type;
+            const applyDelta = newType === 'INCOME' ? newAmount : -newAmount;
+            await prisma.account.update({
+              where: { id: workspace.accounts[0].id },
+              data: { balance: { increment: applyDelta } },
+            });
+          }
+        }
       }
-      if (bestScore < 2) best = null; // sem match confiável, não arrisca excluir errado
-    }
 
-    if (!best) {
-      let msg = `🤔 Não achei com certeza qual excluir. Seja específico (valor + descrição), ex.: "exclui o lanche de 40".\n\nÚltimos lançamentos:\n`;
-      for (const t of candidates.slice(0, 6)) {
-        const d = t.occurredAt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-        msg += `• ${d} — ${t.description}: ${fmt(Number(t.amount))}\n`;
+      if (act.action === 'delete_transaction') {
+        if (!act.transactionId) continue;
+        const existingTx = await prisma.transaction.findUnique({
+          where: { id: act.transactionId },
+        });
+        if (!existingTx) continue;
+
+        if (existingTx.accountId && !existingTx.creditCardId && workspace.accounts[0]) {
+          const reverseDelta = existingTx.type === 'INCOME' ? -Number(existingTx.amount) : Number(existingTx.amount);
+          await prisma.account.update({
+            where: { id: workspace.accounts[0].id },
+            data: { balance: { increment: reverseDelta } },
+          });
+        }
+
+        await prisma.transaction.delete({
+          where: { id: existingTx.id },
+        });
       }
-      await sendReply(msg);
-      return { success: false };
-    }
 
-    // Reverte o saldo se o lançamento havia impactado a conta (crédito não impacta até pagar)
-    if (best.accountId && account && best.id) {
-      const reverse = best.type === 'INCOME' ? -Number(best.amount) : Number(best.amount);
-      await prisma.account.update({ where: { id: best.accountId }, data: { balance: { increment: reverse } } });
-    }
-    await prisma.transaction.delete({ where: { id: best.id } });
+      if (act.action === 'pay_invoice') {
+        if (!act.creditCardId) continue;
+        const card = workspace.creditCards.find(c => c.id === act.creditCardId);
+        if (!card) continue;
 
-    const d = best.occurredAt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-    let msg = `🗑️ Excluído: ${best.description} — ${fmt(Number(best.amount))} (${d})`;
-    if (best.installmentGroup) msg += `\n⚠️ Era uma parcela. As outras parcelas continuam — me diga se quer excluir todas.`;
-    if (best.accountId) msg += `\n🏦 Saldo da conta ajustado.`;
-    await sendReply(msg);
-    return { success: true, deleted: best.id };
-  }
+        const all = await prisma.transaction.findMany({
+          where: { workspaceId: workspace.id, creditCardId: card.id },
+        });
+        const unpaid = all.filter((t: any) => !t.paidAt && t.dueDate);
+        if (unpaid.length === 0) continue;
 
-  // ── INTENT: query_recent (últimos lançamentos) ──
-  if (parsed.intent === 'query_recent') {
-    const txs = await prisma.transaction.findMany({
-      where: { workspaceId: workspace.id },
-      orderBy: { occurredAt: 'desc' },
-      take: 10,
-      include: { category: true },
-    });
-    if (txs.length === 0) {
-      await sendReply('📭 Nenhum lançamento ainda.');
-      return { success: true };
-    }
-    let msg = `🧾 *Últimos lançamentos*\n\n`;
-    for (const t of txs) {
-      const d = t.occurredAt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-      const sign = t.type === 'INCOME' ? '➕' : '➖';
-      const cat = (t as any).category?.name ? ` · ${(t as any).category.name}` : '';
-      msg += `${sign} ${d} — ${t.description}: ${fmt(Number(t.amount))}${cat}\n`;
-    }
-    await sendReply(msg);
-    return { success: true, count: txs.length };
-  }
+        unpaid.sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime());
+        const firstDue = new Date(unpaid[0].dueDate!);
+        const invoice = unpaid.filter((t: any) => {
+          const d = new Date(t.dueDate!);
+          return d.getFullYear() === firstDue.getFullYear() && d.getMonth() === firstDue.getMonth();
+        });
 
-  // ── INTENT: query_payments / query_payments_detail (o que tenho a pagar em tal mês) ──
-  if (parsed.intent === 'query_payments' || parsed.intent === 'query_payments_detail') {
-    const detailed = parsed.intent === 'query_payments_detail';
-    const ctxKey = String(chatId ?? 'default');
-    const now = new Date();
+        const total = invoice.reduce((s, t) => s + (t.type === 'INCOME' ? -Number(t.amount) : Number(t.amount)), 0);
 
-    let year: number, m0: number;
-    if (parsed.targetMonth) {
-      const ahead = monthsUntil(parsed.targetMonth, now);
-      const target = new Date(now.getFullYear(), now.getMonth() + ahead, 1);
-      year = target.getFullYear(); m0 = target.getMonth();
-    } else if (detailed && lastPaymentsContext.has(ctxKey)) {
-      const c = lastPaymentsContext.get(ctxKey)!;
-      year = c.year; m0 = c.month - 1; // usa o mês da última consulta
-    } else {
-      const target = new Date(now.getFullYear(), now.getMonth() + 1, 1); // default "mês que vem"
-      year = target.getFullYear(); m0 = target.getMonth();
-    }
+        const paidAtDate = act.paidAt ? resolveOccurredAt(act.paidAt) : new Date();
 
-    lastPaymentsContext.set(ctxKey, { year, month: m0 + 1 });
-    const monthLabel = `${MONTH_NAMES[m0]}/${year}`;
+        await prisma.transaction.updateMany({
+          where: { id: { in: invoice.map((t: any) => t.id) } },
+          data: { paidAt: paidAtDate },
+        });
 
-    const data = await gatherPayments(workspace.id, year, m0 + 1);
-    const { msg, total } = renderPayments(data, monthLabel, detailed);
-
-    if (total === 0) {
-      await sendReply(`📅 *${monthLabel}*\n\n🎉 Nada previsto a pagar nesse mês.`);
-      return { success: true, total: 0 };
-    }
-
-    let out = msg + `\n💰 *Total a pagar: ${brl(total)}*`;
-    if (!detailed) out += `\n\n💡 Responda *detalhar* para ver os itens de cada fatura.`;
-    await sendReply(out);
-    return { success: true, total };
-  }
-
-  // ── INTENT: query_card_statement (extrato de um cartão num mês) ──
-  if (parsed.intent === 'query_card_statement') {
-    const card = findCreditCard();
-    if (!card) {
-      await sendReply('❌ Qual cartão? Ex.: "extrato de junho do Banco do Brasil".');
-      return { success: false };
-    }
-    const now = new Date();
-    const month = parsed.targetMonth ?? (now.getMonth() + 1);
-    const year = now.getFullYear();
-    const start = new Date(year, month - 1, 1);
-    const end = new Date(year, month, 0, 23, 59, 59, 999);
-
-    const txs = await prisma.transaction.findMany({
-      where: { workspaceId: workspace.id, creditCardId: card.id, dueDate: { gte: start, lte: end } },
-      orderBy: { occurredAt: 'asc' },
-    });
-
-    if (txs.length === 0) {
-      await sendReply(`🧾 *${card.name}* — fatura de ${MONTH_NAMES[month - 1]}/${year}\n\nSem lançamentos nessa fatura.`);
-      return { success: true, count: 0 };
-    }
-
-    let net = 0;
-    let msg = `🧾 *Extrato ${card.name}* — vence ${MONTH_NAMES[month - 1]}/${year}\n\n`;
-    for (const t of txs) {
-      const dd = t.occurredAt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-      const isCredit = t.type === 'INCOME';
-      const paid = t.paidAt ? ' ✅' : '';
-      msg += `${isCredit ? '↩️' : '·'} ${dd} ${t.description}: ${isCredit ? '-' : ''}${brl(Number(t.amount))}${paid}\n`;
-      net += isCredit ? -Number(t.amount) : Number(t.amount);
-    }
-    msg += `\n💰 *Total da fatura: ${brl(net)}* (vence dia ${card.billingDay})`;
-    await sendReply(msg);
-    return { success: true, total: net, count: txs.length };
-  }
-
-  // ── INTENT: query_summary ──
-  if (parsed.intent === 'query_summary') {
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-
-    const [incomeAgg, expenseAgg, catBreakdown] = await Promise.all([
-      prisma.transaction.aggregate({
-        where: { workspaceId: workspace.id, type: 'INCOME', occurredAt: { gte: startOfMonth, lte: endOfMonth } },
-        _sum: { amount: true },
-      }),
-      prisma.transaction.aggregate({
-        where: { workspaceId: workspace.id, type: 'EXPENSE', occurredAt: { gte: startOfMonth, lte: endOfMonth } },
-        _sum: { amount: true },
-      }),
-      prisma.transaction.groupBy({
-        by: ['categoryId'],
-        where: { workspaceId: workspace.id, type: 'EXPENSE', occurredAt: { gte: startOfMonth, lte: endOfMonth } },
-        _sum: { amount: true },
-        orderBy: { _sum: { amount: 'desc' } },
-      }),
-    ]);
-
-    const income = Number(incomeAgg._sum.amount ?? 0);
-    const expense = Number(expenseAgg._sum.amount ?? 0);
-    const monthName = now.toLocaleDateString('pt-BR', { month: 'long' });
-
-    let msg = `📊 *Resumo de ${monthName}*\n\n`;
-    msg += `💰 Entradas: ${fmt(income)}\n`;
-    msg += `💸 Saídas: ${fmt(expense)}\n`;
-    msg += `📈 Saldo do mês: ${fmt(income - expense)}\n`;
-
-    if (catBreakdown.length > 0) {
-      const catIds = catBreakdown.map((c: any) => c.categoryId).filter(Boolean) as string[];
-      const cats = catIds.length > 0 ? await prisma.category.findMany({ where: { id: { in: catIds } } }) : [];
-      msg += `\n📋 *Gastos por categoria:*\n`;
-      for (const cb of catBreakdown) {
-        const cat = cats.find((c: any) => c.id === (cb as any).categoryId);
-        msg += `  • ${cat?.name ?? 'Sem categoria'}: ${fmt(Number((cb as any)._sum.amount ?? 0))}\n`;
+        if (workspace.accounts[0]) {
+          await prisma.account.update({
+            where: { id: workspace.accounts[0].id },
+            data: { balance: { increment: -total } },
+          });
+        }
       }
+    } catch (actErr) {
+      log.error(actErr, `Erro ao processar acao ${act.action}`);
     }
-
-    await sendReply(msg);
-    return { success: true, summary: { income, expense } };
   }
 
-  // ── INTENT: query_category ──
-  if (parsed.intent === 'query_category') {
-    const filterName = parsed.categoryFilter || parsed.category || '';
-    const category = workspace.categories.find((c: { name: string }) =>
-      c.name.toLowerCase().includes(filterName.toLowerCase())
-    );
-
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-
-    const where: any = { workspaceId: workspace.id, occurredAt: { gte: startOfMonth, lte: endOfMonth } };
-    if (category) where.categoryId = category.id;
-
-    const [agg, txs] = await Promise.all([
-      prisma.transaction.aggregate({ where, _sum: { amount: true }, _count: true }),
-      prisma.transaction.findMany({ where, orderBy: { occurredAt: 'desc' }, take: 10 }),
-    ]);
-
-    const total = Number(agg._sum.amount ?? 0);
-    const monthName = now.toLocaleDateString('pt-BR', { month: 'long' });
-    let msg = `📋 *${category?.name ?? filterName} em ${monthName}*\n\n`;
-    msg += `Total: ${fmt(total)} (${agg._count} lançamentos)\n`;
-
-    if (txs.length > 0) {
-      msg += `\nÚltimos lançamentos:\n`;
-      for (const tx of txs) {
-        const date = tx.occurredAt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-        msg += `  • ${date} — ${tx.description}: ${fmt(Number(tx.amount))}\n`;
-      }
-    }
-
-    await sendReply(msg);
-    return { success: true, total, count: agg._count };
+  // 3. Update Chat History
+  const updatedHistory = [...history];
+  updatedHistory.push({ role: 'user', content: text });
+  updatedHistory.push({ role: 'assistant', content: response.reply });
+  if (updatedHistory.length > 20) {
+    updatedHistory.splice(0, updatedHistory.length - 20);
   }
+  chatHistories.set(ctxKey, updatedHistory);
 
-  // ── INTENT: query_balance ──
-  if (parsed.intent === 'query_balance') {
-    const accounts = await prisma.account.findMany({ where: { workspaceId: workspace.id } });
-    const total = accounts.reduce((s: number, a: any) => s + Number(a.balance), 0);
-
-    let msg = `🏦 *Saldo das contas*\n\n`;
-    for (const acc of accounts) {
-      msg += `  • ${acc.name}: ${fmt(Number(acc.balance))}\n`;
-    }
-    msg += `\n💵 Total: ${fmt(total)}`;
-
-    await sendReply(msg);
-    return { success: true, balance: total };
-  }
-
-  // ── INTENT: help ──
-  if (parsed.intent === 'help') {
-    await sendReply(
-      `🤖 *Assistente Financeiro*\n\n` +
-      `💸 *Registrar gasto*\n` +
-      `  "250 gasolina"\n` +
-      `  "45 almoço"\n\n` +
-      `💳 *Gasto no crédito*\n` +
-      `  "22 no crédito no cartão do banco do brasil"\n` +
-      `  → mostra em qual fatura caiu e o vencimento\n\n` +
-      `🧾 *Paguei a fatura*\n` +
-      `  "paguei o cartão BB"\n\n` +
-      `🏦 *Gasto no débito*\n` +
-      `  "80 farmácia débito"\n\n` +
-      `💰 *Registrar entrada*\n` +
-      `  "recebi 5000 salário"\n\n` +
-      `🛒 *Parcelamento*\n` +
-      `  "200 em 6x tênis"\n\n` +
-      `🔄 *Recorrente*\n` +
-      `  "salário recorrente todo dia 5"\n\n` +
-      `📌 *Evento futuro*\n` +
-      `  "vou receber 13º em dezembro 2500"\n\n` +
-      `🔮 *Simular compra*\n` +
-      `  "posso comprar uma TV de 3600 em 12x?"\n\n` +
-      `📈 *Projeção / futuro*\n` +
-      `  "como vai estar meu saldo em setembro?"\n` +
-      `  "saldo dos próximos 6 meses"\n` +
-      `  "quanto posso gastar esse mês?"\n\n` +
-      `📆 *Lançar com data*\n` +
-      `  "40 lanche ontem"\n` +
-      `  "150 mercado dia 28 no crédito do BB"\n\n` +
-      `🗑️ *Excluir*\n` +
-      `  "exclui o lanche de 40"\n` +
-      `  "remove o último lançamento"\n\n` +
-      `🧾 *Últimos lançamentos*\n` +
-      `  "o que registrei essa semana?"\n\n` +
-      `💸 *O que tenho a pagar*\n` +
-      `  "quanto tenho que pagar mês que vem?"\n` +
-      `  "o que vence em junho?" → depois "detalhar"\n\n` +
-      `🧾 *Extrato de um cartão*\n` +
-      `  "extrato de junho do Banco do Brasil"\n` +
-      `  "extrato do Itaú em julho"\n\n` +
-      `📊 *Consultas*\n` +
-      `  "quanto gastei esse mês?"\n` +
-      `  "gastos com alimentação"\n` +
-      `  "qual meu saldo?"`
-    );
-    return { success: true };
-  }
-
-  await sendReply(`🤔 Não entendi sua mensagem.\n\nDigite *ajuda* para ver os comandos disponíveis.`);
-  return { success: false, message: 'Intent não reconhecido' };
+  // 4. Send Agent Reply
+  await sendReply(response.reply);
+  return { success: true, reply: response.reply };
 }

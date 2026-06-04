@@ -1,225 +1,34 @@
-import { groqChat } from './groqAI.js';
-import { parseFinancialMessage } from './parseFinancialMessage.js';
+import { groqChat, GroqMessage } from './groqAI.js';
 
-export type MessageIntent =
-  | 'register_transaction'
-  | 'register_installment'
-  | 'register_recurring'
-  | 'register_planned_event'
-  | 'simulate_purchase'
-  | 'pay_invoice'
-  | 'delete_transaction'
-  | 'query_summary'
-  | 'query_category'
-  | 'query_balance'
-  | 'query_projection'
-  | 'query_safe_to_spend'
-  | 'query_recent'
-  | 'query_payments'
-  | 'query_payments_detail'
-  | 'query_card_statement'
-  | 'help'
-  | 'unknown';
-
-export interface ProcessedMessage {
-  intent: MessageIntent;
-  type: 'income' | 'expense';
-  amount: number | null;
-  description: string;
-  category: string;
-  installments: number | null;
-  frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY' | null;
-  paymentMethod: 'debit' | 'credit' | null;
-  creditCardHint: string | null;
-  categoryFilter: string | null;
-  period: string | null;
-  dayOfMonth: number | null; // "salário todo dia 5" → 5
-  targetMonth: number | null; // mês-alvo 1-12 ("em setembro", "13º em dezembro")
-  horizonMonths: number | null; // "próximos 6 meses" → 6
-  occurredAt: string | null; // data do lançamento (ISO YYYY-MM-DD) p/ lançamentos retroativos ("ontem", "dia 28")
-  aiResponse: string | null;
+export interface AgentAction {
+  action: 'create_transaction' | 'create_installment' | 'update_transaction' | 'delete_transaction' | 'pay_invoice';
+  type?: 'INCOME' | 'EXPENSE';
+  amount?: number;
+  description?: string;
+  occurredAt?: string; // YYYY-MM-DD
+  paymentMethod?: 'credit' | 'debit';
+  creditCardId?: string;
+  categoryId?: string;
+  transactionId?: string;
+  installments?: number;
+  paidAt?: string; // YYYY-MM-DD
 }
 
-function buildSystemPrompt(
-  categoryNames: string[],
-  today: string,
-  creditCards: { id: string; name: string }[],
-  todayISO: string,
-): string {
-  const cardsInfo = creditCards.length > 0
-    ? creditCards.map(c => `- "${c.name}"`).join('\n')
-    : '- Nenhum cartão cadastrado';
-
-  return `Você é um assistente financeiro inteligente que interpreta mensagens do WhatsApp em português brasileiro.
-
-DATA DE HOJE: ${today}
-DATA DE HOJE (ISO): ${todayISO}
-
-CATEGORIAS DISPONÍVEIS NO SISTEMA:
-${categoryNames.length > 0 ? categoryNames.map(c => `- ${c}`).join('\n') : '- Nenhuma categoria cadastrada'}
-
-CARTÕES DE CRÉDITO CADASTRADOS:
-${cardsInfo}
-
-Analise a mensagem do usuário e retorne APENAS um JSON (sem markdown, sem texto extra) com esta estrutura:
-
-{
-  "intent": "register_transaction" | "register_installment" | "register_recurring" | "register_planned_event" | "simulate_purchase" | "pay_invoice" | "delete_transaction" | "query_summary" | "query_category" | "query_balance" | "query_projection" | "query_safe_to_spend" | "query_recent" | "query_payments" | "query_payments_detail" | "query_card_statement" | "help" | "unknown",
-  "type": "income" | "expense",
-  "amount": number | null,
-  "description": "descrição curta do gasto/receita",
-  "category": "nome da categoria mais adequada das disponíveis",
-  "installments": number | null,
-  "frequency": "MONTHLY" | "WEEKLY" | "DAILY" | "YEARLY" | null,
-  "paymentMethod": "credit" | "debit" | null,
-  "creditCardHint": "nome exato do cartão cadastrado que melhor corresponde" | null,
-  "categoryFilter": "nome da categoria filtrada" | null,
-  "period": "month" | "week" | "year" | null,
-  "dayOfMonth": number | null,
-  "targetMonth": number | null,
-  "horizonMonths": number | null,
-  "occurredAt": "YYYY-MM-DD" | null,
-  "aiResponse": null
+export interface AgentResponse {
+  actions: AgentAction[];
+  reply: string;
 }
 
-REGRAS DE CLASSIFICAÇÃO DE INTENT:
-
-1. **register_transaction**: Registro simples de gasto ou receita.
-   Exemplos: "250 gasolina", "recebi 5000 salário", "almocei 35", "uber 22", "r$ 150 mercado"
-
-2. **register_installment**: Compra parcelada. Detecte padrões como "6x", "em 6 vezes", "12x67", "parcelado".
-   Exemplos: "200 em 6x tênis", "12x67 celular", "notebook 3000 em 10x", "comprei um sofá 2400 em 8 vezes"
-   → Siga estritamente as regras de cálculo do \`amount\` em REGRAS GERAIS abaixo (nunca envie contas matemáticas como "350 * 3" no JSON).
-
-3. **register_recurring**: Gasto ou receita recorrente/fixo. Palavras-chave: "todo mês", "mensal", "fixo", "assinatura", "recorrente", "todo dia X".
-   Exemplos: "netflix todo mês 40", "academia mensal 100", "aluguel fixo 1500", "salário recorrente todo dia 5"
-   → Se mencionar um dia ("todo dia 5", "dia 10"), preencha "dayOfMonth".
-
-4. **register_planned_event**: Receita ou despesa PONTUAL FUTURA, num mês específico (não recorrente).
-   Exemplos: "vou receber 13º em dezembro 2500", "férias em julho 1800", "IPVA em janeiro 1200", "bônus em março 3000"
-   → Preencha "targetMonth" (1-12) com o mês do evento e "type" (income/expense).
-
-5. **simulate_purchase**: Usuário quer SIMULAR se pode/deve fazer uma compra antes de comprar.
-   Palavras-chave: "posso comprar", "dá pra comprar", "consigo comprar", "vale a pena", "e se eu comprar".
-   Exemplos: "posso comprar uma TV de 3600 em 12x?", "dá pra comprar um celular de 2000?", "consigo um notebook 10x de 300?"
-   → Preencha "amount" (valor TOTAL) e "installments" (1 se à vista).
-
-6. **pay_invoice**: Usuário avisa que PAGOU a fatura de um cartão de crédito.
-   Palavras-chave: "paguei o cartão", "paguei a fatura", "quitei o cartão", "fatura paga".
-   Exemplos: "paguei o cartão BB", "quitei a fatura do nubank", "paguei a fatura do inter"
-   → Preencha "creditCardHint" com o nome do cartão correspondente.
-
-6b. **delete_transaction**: Usuário quer APAGAR/EXCLUIR/REMOVER um lançamento que já registrou (ou corrigir um erro).
-   Palavras-chave: "exclui", "apaga", "remove", "deleta", "cancela o lançamento", "errei", "não era esse".
-   Exemplos: "exclui o lanche de 40 de ontem", "apaga aquele uber de 22", "remove o último lançamento", "deleta o mercado de 150"
-   → Preencha "amount" e/ou "description" com o que identifica o lançamento, e "occurredAt" se mencionar a data.
-
-6c. **query_recent**: Usuário quer ver os ÚLTIMOS lançamentos registrados.
-   Exemplos: "últimos lançamentos", "o que registrei hoje?", "mostra meus gastos recentes", "lista as últimas transações"
-
-6d. **query_payments**: Usuário quer saber o que TEM A PAGAR / o que VENCE num mês (faturas de cartão + recorrentes/fixos).
-   Palavras-chave: "quanto tenho que pagar", "o que tenho que pagar", "o que vence", "contas de", "minhas contas".
-   Exemplos: "quanto tenho que pagar mês que vem?", "o que tenho que pagar em junho?", "contas de junho", "o que vence esse mês?"
-   → Preencha "targetMonth" (1-12). Para "mês que vem"/"próximo mês", use o número do PRÓXIMO mês. Para "esse mês", use o mês atual.
-
-6e. **query_payments_detail**: Usuário pede para DETALHAR/abrir os valores da última pergunta de contas a pagar.
-   Palavras-chave: "detalhar", "detalha", "detalhe", "o que tem nesses valores", "quais são esses gastos", "abre os valores", "o que tem dentro".
-   Exemplos: "detalha", "detalhar esses valores", "o que tem nessa fatura?", "quais gastos são esses?"
-   → Se mencionar um mês, preencha "targetMonth"; senão deixe null (usa o mês da última consulta).
-
-6f. **query_card_statement**: Usuário quer o EXTRATO de UM cartão específico num mês (lista de lançamentos da fatura).
-   Palavras-chave: "extrato", "fatura detalhada", "lançamentos do cartão".
-   Exemplos: "extrato de junho do banco do brasil", "extrato do itaú em julho", "fatura do nubank de agosto detalhada"
-   → Preencha "creditCardHint" (o cartão) e "targetMonth" (1-12, o mês de vencimento da fatura).
-
-7. **query_summary**: Pergunta sobre resumo financeiro geral do período.
-   Exemplos: "quanto gastei esse mês?", "resumo do mês", "como estão minhas finanças?", "gastos de abril"
-
-7. **query_category**: Pergunta sobre gastos de uma categoria específica.
-   Exemplos: "quanto gastei de alimentação?", "gastos com transporte", "quanto foi de gasolina esse mês?"
-   → Preencha "categoryFilter" com o nome da categoria mais próxima das disponíveis.
-
-8. **query_balance**: Pergunta sobre saldo ATUAL das contas.
-   Exemplos: "qual meu saldo?", "quanto tenho na conta?", "saldo atual"
-
-9. **query_projection**: Pergunta sobre saldo FUTURO/previsto ou projeção.
-   Exemplos: "como vai estar meu saldo em setembro?", "saldo dos próximos 6 meses", "como fica meu financeiro até dezembro?", "vou ficar no vermelho?"
-   → Se citar um mês ("em setembro"), preencha "targetMonth" (1-12). Se citar quantidade ("próximos 6 meses"), preencha "horizonMonths".
-
-10. **query_safe_to_spend**: Pergunta quanto pode gastar com segurança.
-    Exemplos: "quanto posso gastar esse mês?", "quanto posso gastar livre?", "tenho margem pra gastar?"
-
-11. **help**: Pedido de ajuda ou dúvida sobre o bot.
-    Exemplos: "o que você faz?", "ajuda", "como funciona?", "comandos"
-
-12. **unknown**: Não se encaixa em nenhum intent acima. Mensagens irrelevantes.
-
-REGRAS DE MESES (targetMonth): janeiro=1, fevereiro=2, ..., dezembro=12.
-
-REGRAS DE DATA DO LANÇAMENTO (occurredAt):
-- Use a DATA DE HOJE (ISO) acima como referência para calcular datas relativas.
-- "hoje" ou sem menção de data → occurredAt = null (será hoje).
-- "ontem" → data de hoje menos 1 dia. "anteontem" → menos 2 dias.
-- "dia 28", "no dia 3" → dia desse número no mês atual (se já passou muito, pode ser o mês atual mesmo; mantenha o mês atual salvo indício claro).
-- "semana passada" → 7 dias atrás. "segunda passada", "sexta" → a data mais recente desse dia da semana.
-- SEMPRE retorne occurredAt no formato ISO "YYYY-MM-DD". Ex.: se hoje é 2026-05-31 e o usuário diz "ontem", occurredAt = "2026-05-30".
-- Isso vale para register_transaction, register_installment e delete_transaction (para localizar o lançamento certo).
-
-REGRAS DE MEIO DE PAGAMENTO (paymentMethod):
-- "crédito", "no crédito", "no cartão", "cartão de crédito" → paymentMethod = "credit"
-- "débito", "no débito", "no cheque" → paymentMethod = "debit"
-- Se mencionar qualquer cartão cadastrado → paymentMethod = "credit" automaticamente
-- Se não mencionado → paymentMethod = null
-
-REGRAS DE CARTÃO (creditCardHint):
-- Compare o que o usuário disse com os CARTÕES CADASTRADOS acima e retorne o nome EXATO do cartão correspondente
-- Use seu conhecimento de apelidos brasileiros de bancos e cartões:
-  • "BB", "banco do brasil", "ourocard" → cartão com "Banco do Brasil" ou "BB" no nome
-  • "roxinho", "nubank", "nu" → cartão com "Nubank" no nome
-  • "laranjinha", "inter", "banco inter" → cartão com "Inter" no nome
-  • "itaú", "itauzinho" → cartão com "Itaú" no nome
-  • "brad", "bradesco", "next" → cartão com "Bradesco" ou "Next" no nome
-  • "c6", "c6 bank" → cartão com "C6" no nome
-  • "xp" → cartão com "XP" no nome
-  • "santander" → cartão com "Santander" no nome
-  • "caixa", "cef" → cartão com "Caixa" no nome
-  • "avenue", "will", "wise" → cartões internacionais com esses nomes
-- Se nenhum cartão cadastrado corresponder mas o usuário mencionou um cartão → retorne o apelido que o usuário usou
-- Se não mencionou nenhum cartão → null
-
-REGRAS DE VALOR POR SERVIÇO (amount):
-- Se o usuário NÃO informar o valor mas mencionar um serviço de assinatura conhecido, use o seu melhor conhecimento sobre o preço atual no Brasil para aquele plano específico.
-- Os preços de assinaturas mudam com frequência. Se não tiver certeza do valor exato para o plano mencionado → deixe amount = null e o usuário informará manualmente.
-- Prefira deixar amount = null a colocar um valor errado.
-
-REGRAS DE CATEGORIZAÇÃO:
-- Gasolina, combustível, uber, 99, ônibus, metrô → Transporte
-- Mercado, supermercado, padaria, ifood, lanche, restaurante, almoço, jantar, café → Alimentação
-- Barbeiro, salão, beleza, academia, farmácia → Pessoal
-- Salário, freela, freelance, venda, pix recebido → Receita
-- Netflix, spotify, youtube, disney, streaming → Assinatura/Entretenimento
-- Aluguel, condomínio, luz, água, internet, celular → Moradia
-- Escola, curso, livro, faculdade → Educação
-- Médico, dentista, exame, consulta → Saúde
-- Se a categoria existe nas CATEGORIAS DISPONÍVEIS, use exatamente o nome de lá.
-- Se não existe nenhuma compatível, sugira o nome mais adequado.
-
-REGRAS GERAIS:
-- Valores com vírgula (ex: "25,90") são decimais brasileiros → interprete como 25.90
-- "recebi", "salário", "entrada", "ganhei", "venda" → type = "income"
-- Todo o resto → type = "expense"
-- CÁLCULO DE VALOR TOTAL EM PARCELAMENTO:
-  • Se o usuário informar um valor seguido de "em N vezes", "em Nx" ou "dividido em Nx" (ex: "adiciona 100 reais em 2x", "adiciona 350 em 3x"), esse valor é o VALOR TOTAL (inteiro) do parcelamento. Portanto, o \`amount\` deve ser o próprio valor informado sem nenhuma multiplicação (ex: no texto "350 em 3x", \`amount\` é \`350\` e \`installments\` é \`3\`).
-  • Se o usuário especificar um padrão no formato "N vezes de Y", "N parcelas de Y" ou "NxY" (ex: "12x de 67", "3 parcelas de 50", "12x67"), então o valor Y é de cada parcela. O \`amount\` que você deve retornar deve ser o VALOR TOTAL calculado (N x Y), mas você deve fazer a multiplicação e retornar apenas o número final resultante no JSON. Nunca escreva expressões matemáticas (como "50 * 3" ou "350 * 3") dentro do JSON, pois isso invalida a estrutura do JSON. Retorne apenas o número calculado (ex: \`150\` ou \`804\`).
-- Para recurring, frequency geralmente é "MONTHLY" salvo indicação contrária
-- Para queries, amount/description/category podem ser null`;
-}
-
-export async function processWhatsAppMessage(
+export async function processAgentMessage(
   text: string,
-  categoryNames: string[],
-  creditCards: { id: string; name: string }[] = [],
-): Promise<ProcessedMessage> {
+  categories: { id: string; name: string }[],
+  accounts: { id: string; name: string; balance: unknown }[],
+  creditCards: { id: string; name: string; billingDay: number; closingDay: number }[],
+  creditCardsStatus: string,
+  monthSummary: string,
+  recentTransactionsList: string,
+  history: { role: 'user' | 'assistant'; content: string }[],
+): Promise<AgentResponse> {
   const now = new Date();
   const today = now.toLocaleDateString('pt-BR', {
     weekday: 'long',
@@ -227,53 +36,104 @@ export async function processWhatsAppMessage(
     month: 'long',
     day: 'numeric',
   });
-  // Âncora ISO em horário local para o modelo calcular datas relativas ("ontem" etc.)
   const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
+  const categoriesStr = categories.map(c => `- "${c.name}" (ID: ${c.id})`).join('\n');
+  const accountsStr = accounts.map(a => `- "${a.name}" (ID: ${a.id}, Saldo: ${a.balance})`).join('\n');
+  const cardsStr = creditCards.map(c => `- "${c.name}" (ID: ${c.id}, Fechamento: dia ${c.closingDay}, Vencimento: dia ${c.billingDay})`).join('\n');
+
+  const systemMessage = `Você é o assistente financeiro de Inteligência Artificial da Fintech.
+Você fala em português brasileiro de forma natural, amigável e empática (como uma pessoa de verdade, não um bot engessado).
+
+Seu papel é conversar de forma livre e inteligente com o usuário e, simultaneamente, decidir se precisa realizar ações no banco de dados para criar, atualizar, excluir transações ou pagar faturas.
+
+HOJE É: ${today} (ISO: ${todayISO})
+
+ESTADO ATUAL DO BANCO DE DATOS:
+
+Categorias Cadastradas:
+${categoriesStr || '- Nenhuma'}
+
+Contas Cadastradas:
+${accountsStr || '- Nenhuma'}
+
+Cartões de Crédito Cadastrados:
+${cardsStr || '- Nenhum'}
+
+Faturas de Cartão (Valores em Aberto por Mês de Vencimento):
+${creditCardsStatus || '- Nenhuma informação de fatura'}
+
+Resumo Financeiro do Mês Atual:
+${monthSummary}
+
+Últimos 15 Lançamentos Registrados na Conta (Mais Recentes Primeiro):
+${recentTransactionsList || '- Nenhum lançamento registrado'}
+
+INSTRUÇÕES DO SISTEMA:
+
+1. COMPORTAMENTO DE IA CENTRAL:
+   - Responda de forma autônoma, natural e amigável na propriedade "reply", em português do Brasil. Escreva como um humano, usando emojis moderados, sem formatações robóticas.
+   - Seja livre para sugerir mudanças, explicar finanças, brincar de leve ou dar conselhos financeiros inteligentes caso o usuário pergunte ou mostre preocupação.
+   - Se o usuário fez uma pergunta ou apenas pediu um conselho, sua lista de "actions" deve ser vazia.
+
+2. COMBATE À SINTAXE DE COMANDOS:
+   - Esqueça regras do tipo "digite ajuda" ou fluxogramas rígidos. Se o usuário quiser ajuda, explique de forma relaxada e de maneira humana e amigável no reply o que você pode fazer por ele (como registrar, corrigir, tirar dúvidas, fazer simulações, analisar extrato etc.).
+
+3. DECISÃO DE AÇÕES SEQUENCIAIS ("actions"):
+   - Você pode retornar uma lista de uma ou mais ações no array "actions" para commitar modificações de dados baseadas nas intenções do usuário.
+   - Ações Suportadas:
+     * {"action": "create_transaction", "type": "INCOME"|"EXPENSE", "amount": number, "description": string, "occurredAt": "YYYY-MM-DD", "paymentMethod": "credit"|"debit", "creditCardId": "ID_DO_CARTÃO_SE_CREDITO", "categoryId": "ID_DA_CATEGORIA"}
+     * {"action": "create_installment", "amount": VALOR_TOTAL, "installments": number, "description": string, "occurredAt": "YYYY-MM-DD", "paymentMethod": "credit"|"debit", "creditCardId": string, "categoryId": string}
+     * {"action": "update_transaction", "transactionId": "ID_DO_LANCAMENTO", "amount": number, "description": string, "occurredAt": "YYYY-MM-DD", "categoryId": string, "paymentMethod": "credit"|"debit", "creditCardId": string}
+       (Nota: Se atualizar uma parcela de um grupo, o sistema do backend atualizará automaticamente todas as parcelas futuras ligadas àquele grupo em cascata!)
+     * {"action": "delete_transaction", "transactionId": "ID_DO_LANCAMENTO"}
+     * {"action": "pay_invoice", "creditCardId": "ID_DO_CARTÃO", "paidAt": "YYYY-MM-DD"}
+
+4. TRATAMENTO DE CORREÇÕES E EXCLUSÕES:
+   - Se o usuário disser: "errei, altera o valor para 241,53", "não era 250, era 241,53 em 4x no BB", "exclui a última compra", etc:
+     * Analise a lista de "Últimos Lançamentos Registrados na Conta" e o histórico de mensagens para identificar EXACTAMENTE qual transação o usuário deseja alterar ou deletar.
+     * Use o ID correspondente da transação encontrada no banco para emitir uma ação "update_transaction" ou "delete_transaction".
+     * Se ele disser para alterar um valor de parcelamento, encontre QUALQUER uma das parcelas recentes na lista, pegue o seu ID, e envie "update_transaction" com o novo valor total e o ID. O backend se encarrega de recalcular as parcelas ligadas a ela se pertencerem a um grupo! Ou envie um "delete_transaction" seguido de um novo "create_installment" se parecer mais limpo.
+     * No campo "occurredAt", use sempre datas no formato ISO YYYY-MM-DD. Calcule "ontem", "anteontem" ou dias específicos em relação a hoje (${todayISO}).
+
+5. REGRAS DE FECHAMENTO DE FATURA E CARTÕES:
+   - Quando o usuário informar um cartão por nome/apelido (ex: "Itaú", "BB", "Banco do Brasil", "roxinho", "Nubank"), localize o ID correto correspondente na lista de "Cartões de Crédito Cadastrados".
+   - Se o usuário diz "Era pra entrar na fatura que fecha dia 30/05" em relação a uma compra, você pode alterar a data "occurredAt" do lançamento usando "update_transaction" para uma data adequada que caia dentro do ciclo correto da fatura que fecha nesse período.
+
+RETORNE EXCLUSIVAMENTE UM OBJETO JSON COMPATÍVEL COM ESTE SCHEMA (sem markdown de bloco code, sem texto antes ou depois):
+
+{
+  "actions": [ ... ],
+  "reply": "Sua resposta amigável e natural aqui."
+}`;
+
+  const messages: GroqMessage[] = [
+    { role: 'system', content: systemMessage },
+  ];
+
+  // Adicionar histórico recente (limitar a 10)
+  for (const h of history.slice(-10)) {
+    messages.push({ role: h.role, content: h.content });
+  }
+
+  // Adicionar mensagem atual
+  messages.push({ role: 'user', content: text });
+
   try {
-    const raw = await groqChat([
-      { role: 'system', content: buildSystemPrompt(categoryNames, today, creditCards, todayISO) },
-      { role: 'user', content: text },
-    ]);
+    const rawResponse = await groqChat(messages, 0.1, 1024);
+    const parsed = JSON.parse(rawResponse.trim()) as AgentResponse;
 
-    const parsed = JSON.parse(raw) as ProcessedMessage;
-
-    // Garante campos obrigatórios
-    if (!parsed.intent) parsed.intent = 'unknown';
-    if (!parsed.type) parsed.type = 'expense';
-    if (!parsed.description) parsed.description = text;
-    if (!parsed.category) parsed.category = 'Geral';
-    if (!parsed.paymentMethod) parsed.paymentMethod = null;
-    if (!parsed.creditCardHint) parsed.creditCardHint = null;
-    if (parsed.dayOfMonth === undefined) parsed.dayOfMonth = null;
-    if (parsed.targetMonth === undefined) parsed.targetMonth = null;
-    if (parsed.horizonMonths === undefined) parsed.horizonMonths = null;
-    if (parsed.occurredAt === undefined) parsed.occurredAt = null;
-    parsed.aiResponse = null;
+    if (!parsed.actions) parsed.actions = [];
+    if (!parsed.reply) parsed.reply = 'Ok, processei seu pedido.';
 
     return parsed;
   } catch (err) {
-    console.error('[processMessage] Groq falhou, usando fallback regex:', (err as Error).message);
-
-    // Fallback para o parser regex
-    const fallback = parseFinancialMessage(text);
+    console.error('[processAgentMessage] Erro na chamada do Agent:', err);
     return {
-      intent: fallback.success ? 'register_transaction' : 'unknown',
-      type: fallback.type,
-      amount: fallback.amount,
-      description: fallback.description,
-      category: fallback.category,
-      installments: null,
-      frequency: null,
-      paymentMethod: fallback.paymentMethod,
-      creditCardHint: null,
-      categoryFilter: null,
-      period: null,
-      dayOfMonth: null,
-      targetMonth: null,
-      horizonMonths: null,
-      occurredAt: null,
-      aiResponse: null,
+      actions: [],
+      reply: 'Desculpe, tive um probleminha para processar essa mensagem agora. Pode tentar novamente?',
     };
   }
 }
+
+
