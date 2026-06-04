@@ -289,31 +289,44 @@ export async function handleIncomingMessage(
     const groupId = randomUUID();
     const baseDate = resolveOccurredAt(parsed.occurredAt); // 1ª parcela na data informada (ou hoje)
     const txs = [];
+    const isCredit = parsed.paymentMethod === 'credit';
+    const matchedCard = findCreditCard();
 
     for (let i = 0; i < parsed.installments; i++) {
       const date = new Date(baseDate);
       date.setMonth(date.getMonth() + i);
+
+      let dueDate: Date | null = null;
+      let creditCardId: string | null = null;
+      if (isCredit && matchedCard) {
+        const cycle = invoiceForPurchase(matchedCard, date);
+        dueDate = cycle.dueDate;
+        creditCardId = matchedCard.id;
+      }
+
       const tx = await prisma.transaction.create({
         data: {
           type: 'EXPENSE',
           amount: installmentAmount,
           description: `${parsed.description} (${i + 1}/${parsed.installments})`,
           occurredAt: date,
-          // 1ª parcela já é paga; as demais ficam agendadas (futuro vs já pago)
-          status: i === 0 ? 'CONFIRMED' : 'SCHEDULED',
+          status: isCredit ? 'CONFIRMED' : (i === 0 ? 'CONFIRMED' : 'SCHEDULED'),
           source: 'telegram',
+          paymentMethod: parsed.paymentMethod,
+          dueDate,
+          creditCardId,
           installmentGroup: groupId,
           installmentCurrent: i + 1,
           installmentTotal: parsed.installments,
           workspaceId: workspace.id,
           categoryId: category?.id ?? null,
-          accountId: account?.id ?? null,
+          accountId: isCredit ? null : (account?.id ?? null),
         },
       });
       txs.push(tx);
     }
 
-    if (account) {
+    if (!isCredit && account) {
       await prisma.account.update({ where: { id: account.id }, data: { balance: { increment: -installmentAmount } } });
     }
 
@@ -329,13 +342,23 @@ export async function handleIncomingMessage(
       }
     } catch { /* projeção é best-effort */ }
 
-    await sendReply(
-      `🛒 Parcelamento registrado!\n` +
-      `${parsed.description}: ${fmt(parsed.amount)} em ${parsed.installments}x de ${fmt(installmentAmount)}\n` +
-      `Parcelas lançadas de ${new Date().toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })} ` +
-      `até ${txs[txs.length - 1].occurredAt.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })}` +
-      impacto
-    );
+    let replyMsg = `🛒 Parcelamento registrado!\n` +
+      `${parsed.description}: ${fmt(parsed.amount)} em ${parsed.installments}x de ${fmt(installmentAmount)}\n`;
+
+    if (isCredit && matchedCard) {
+      const firstCycle = invoiceForPurchase(matchedCard, baseDate);
+      const lastDate = new Date(baseDate);
+      lastDate.setMonth(lastDate.getMonth() + parsed.installments - 1);
+      const lastCycle = invoiceForPurchase(matchedCard, lastDate);
+      replyMsg += `💳 Cartão: *${matchedCard.name}*\n` +
+                  `📅 Fatura de vencimento inicial: ${fmtDate(firstCycle.dueDate)}\n` +
+                  `📅 Fatura de vencimento final: ${fmtDate(lastCycle.dueDate)}\n`;
+    } else {
+      replyMsg += `Parcelas lançadas de ${baseDate.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })} ` +
+                  `até ${txs[txs.length - 1].occurredAt.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })}\n`;
+    }
+    replyMsg += impacto;
+    await sendReply(replyMsg);
     return { success: true, installments: txs.length };
   }
 

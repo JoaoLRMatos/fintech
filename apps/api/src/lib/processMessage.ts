@@ -89,6 +89,7 @@ REGRAS DE CLASSIFICAÇÃO DE INTENT:
 
 2. **register_installment**: Compra parcelada. Detecte padrões como "6x", "em 6 vezes", "12x67", "parcelado".
    Exemplos: "200 em 6x tênis", "12x67 celular", "notebook 3000 em 10x", "comprei um sofá 2400 em 8 vezes"
+   → Siga estritamente as regras de cálculo do \`amount\` em REGRAS GERAIS abaixo (nunca envie contas matemáticas como "350 * 3" no JSON).
 
 3. **register_recurring**: Gasto ou receita recorrente/fixo. Palavras-chave: "todo mês", "mensal", "fixo", "assinatura", "recorrente", "todo dia X".
    Exemplos: "netflix todo mês 40", "academia mensal 100", "aluguel fixo 1500", "salário recorrente todo dia 5"
@@ -207,7 +208,9 @@ REGRAS GERAIS:
 - Valores com vírgula (ex: "25,90") são decimais brasileiros → interprete como 25.90
 - "recebi", "salário", "entrada", "ganhei", "venda" → type = "income"
 - Todo o resto → type = "expense"
-- Para installments, o amount é o valor TOTAL (não da parcela). Se o user diz "12x67", amount=804, installments=12
+- CÁLCULO DE VALOR TOTAL EM PARCELAMENTO:
+  • Se o usuário informar um valor seguido de "em N vezes", "em Nx" ou "dividido em Nx" (ex: "adiciona 100 reais em 2x", "adiciona 350 em 3x"), esse valor é o VALOR TOTAL (inteiro) do parcelamento. Portanto, o \`amount\` deve ser o próprio valor informado sem nenhuma multiplicação (ex: no texto "350 em 3x", \`amount\` é \`350\` e \`installments\` é \`3\`).
+  • Se o usuário especificar um padrão no formato "N vezes de Y", "N parcelas de Y" ou "NxY" (ex: "12x de 67", "3 parcelas de 50", "12x67"), então o valor Y é de cada parcela. O \`amount\` que você deve retornar deve ser o VALOR TOTAL calculado (N x Y), mas você deve fazer a multiplicação e retornar apenas o número final resultante no JSON. Nunca escreva expressões matemáticas (como "50 * 3" ou "350 * 3") dentro do JSON, pois isso invalida a estrutura do JSON. Retorne apenas o número calculado (ex: \`150\` ou \`804\`).
 - Para recurring, frequency geralmente é "MONTHLY" salvo indicação contrária
 - Para queries, amount/description/category podem ser null`;
 }
