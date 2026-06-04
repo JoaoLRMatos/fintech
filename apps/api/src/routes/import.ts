@@ -1,7 +1,7 @@
 ﻿import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { groqChat } from '../lib/groqAI.js';
+import { claudeChat, cleanAndParseJSON } from '../lib/claudeAI.js';
 import * as XLSX from 'xlsx';
 
 // Detecta se uma string parece uma data
@@ -159,12 +159,16 @@ ${headers.map((h, i) => `[${i}] ${h}`).join(' | ')}
 AMOSTRA DE DADOS:
 ${sampleText}`;
 
-  const raw = await groqChat([
-    { role: 'system', content: system },
-    { role: 'user', content: user },
-  ], 0.1, 4096);
+  const raw = await claudeChat(
+    [
+      { role: 'user', content: user },
+    ],
+    system,
+    0.1,
+    4000,
+  );
 
-  return JSON.parse(raw);
+  return cleanAndParseJSON(raw);
 }
 
 export async function importRoutes(app: FastifyInstance) {
