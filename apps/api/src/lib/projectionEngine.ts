@@ -1,5 +1,6 @@
 import { prisma } from './prisma.js';
 import { getFifthBusinessDayOfMonth, addMonthsClamped } from './businessDays.js';
+import { invoiceForPurchase } from './creditCard.js';
 
 /**
  * Motor de projeção financeira.
@@ -94,6 +95,50 @@ export function recurrencesInWindow(nextDueDate: Date, frequency: string, endDat
   return count;
 }
 
+/**
+ * Para regras recorrentes lançadas no CARTÃO DE CRÉDITO, a despesa não pertence
+ * ao mês do lançamento (nextDueDate) mas ao mês de VENCIMENTO da fatura.
+ * Ex.: Netflix lançado em 15/jun em cartão que fecha dia 25 e vence dia 10
+ * → fatura fecha 25/jun → vence 10/jul → a despesa é de JULHO, não de junho.
+ *
+ * Esta função itera as datas de lançamento da regra e retorna quantas geram uma
+ * fatura com dueDate caindo no intervalo [dueDateStart, dueDateEnd].
+ */
+function creditCardRecurrencesForDueWindow(
+  nextDueDate: Date,
+  frequency: string,
+  endDate: Date | null,
+  dueDateStart: Date,
+  dueDateEnd: Date,
+  isFifthBusinessDay: boolean,
+  card: { closingDay: number; billingDay: number },
+): { count: number; firstDueDate: Date | null } {
+  // Busca lançamentos numa janela generosa: a dueDate pode ser até ~2 meses depois do lançamento.
+  const searchStart = new Date(dueDateStart.getFullYear(), dueDateStart.getMonth() - 3, 1);
+  const searchEnd = dueDateEnd;
+
+  let d = new Date(nextDueDate);
+  let guard = 0;
+  while (d < searchStart && guard < 5000) {
+    d = advanceRule(d, frequency, isFifthBusinessDay);
+    guard++;
+  }
+
+  let count = 0;
+  let firstDueDate: Date | null = null;
+  while (d <= searchEnd && guard < 5000) {
+    if (endDate && d > endDate) break;
+    const { dueDate } = invoiceForPurchase(card, d);
+    if (dueDate >= dueDateStart && dueDate <= dueDateEnd) {
+      count++;
+      if (!firstDueDate) firstDueDate = new Date(dueDate);
+    }
+    d = advanceRule(d, frequency, isFifthBusinessDay);
+    guard++;
+  }
+  return { count, firstDueDate };
+}
+
 export async function currentBalance(workspaceId: string): Promise<number> {
   const accounts = await prisma.account.findMany({ where: { workspaceId }, select: { balance: true } });
   return accounts.reduce((s, a) => s + Number(a.balance), 0);
@@ -121,9 +166,10 @@ export async function pendingRecurringForMonth(
   start: Date,
   end: Date,
 ): Promise<{ income: number; expense: number; entries: PendingRecurringEntry[] }> {
-  const [rules, categories] = await Promise.all([
+  const [rules, categories, creditCards] = await Promise.all([
     prisma.recurringRule.findMany({ where: { workspaceId, active: true } }),
     prisma.category.findMany({ where: { workspaceId } }),
+    prisma.creditCard.findMany({ where: { workspaceId } }),
   ]);
 
   let income = 0;
@@ -131,7 +177,25 @@ export async function pendingRecurringForMonth(
   const entries: PendingRecurringEntry[] = [];
 
   for (const r of rules) {
-    const n = recurrencesInWindow(new Date(r.nextDueDate), r.frequency, r.endDate ?? null, start, end, !!r.isFifthBusinessDay);
+    let n: number;
+    let entryDate: Date;
+
+    if (r.creditCardId) {
+      // Cartão de crédito: a despesa vai para o mês de VENCIMENTO da fatura,
+      // não para o mês do lançamento. Ex.: Netflix 15/jun → fatura 10/jul.
+      const card = creditCards.find((c) => c.id === r.creditCardId);
+      if (!card) continue;
+      const result = creditCardRecurrencesForDueWindow(
+        new Date(r.nextDueDate), r.frequency, r.endDate ?? null,
+        start, end, !!r.isFifthBusinessDay, card,
+      );
+      n = result.count;
+      entryDate = result.firstDueDate ?? start;
+    } else {
+      n = recurrencesInWindow(new Date(r.nextDueDate), r.frequency, r.endDate ?? null, start, end, !!r.isFifthBusinessDay);
+      entryDate = new Date(r.nextDueDate);
+    }
+
     if (n === 0) continue;
     const total = Number(r.amount) * n;
     if (r.type === 'INCOME') income += total;
@@ -143,7 +207,7 @@ export async function pendingRecurringForMonth(
       description: `[Previsto] ${r.description}`,
       amount: total,
       type: r.type as 'INCOME' | 'EXPENSE',
-      occurredAt: new Date(r.nextDueDate),
+      occurredAt: entryDate,
       categoryId: cat?.id ?? null,
       category: cat ? { id: cat.id, name: cat.name, color: cat.color } : null,
       isProjection: true,
@@ -183,7 +247,7 @@ export async function projectMonths(workspaceId: string, input: ProjectInput = {
   const rangeStart = monthWindow(baseDate, startOffset).start;
   const rangeEnd = monthWindow(baseDate, startOffset + horizon - 1).end;
 
-  const [rules, events, budgets, proRules, futureTx, categories] = await Promise.all([
+  const [rules, events, budgets, proRules, futureTx, categories, creditCards] = await Promise.all([
     prisma.recurringRule.findMany({ where: { workspaceId, active: true } }),
     prisma.plannedEvent.findMany({ where: { workspaceId, realized: false, expectedAt: { gte: rangeStart, lte: rangeEnd } } }),
     prisma.budgetEntry.findMany({ where: { workspaceId } }),
@@ -199,6 +263,7 @@ export async function projectMonths(workspaceId: string, input: ProjectInput = {
       include: { category: true }
     }),
     prisma.category.findMany({ where: { workspaceId } }),
+    prisma.creditCard.findMany({ where: { workspaceId } }),
   ]);
 
   const hypothetical = input.hypothetical ?? [];
@@ -241,12 +306,24 @@ export async function projectMonths(workspaceId: string, input: ProjectInput = {
       });
     }
 
-    // 2) Regras recorrentes que disparam no mês (ainda não materializadas no futuro)
+    // 2) Regras recorrentes que disparam no mês (ainda não materializadas no futuro).
+    //    Para cartão de crédito, a despesa vai para o mês de VENCIMENTO da fatura
+    //    (não o mês do lançamento), para que a projeção reflita o fluxo de caixa real.
     let recurringIncome = 0;
     let recurringExpense = 0;
     let fixed = 0;
     for (const r of rules) {
-      const n = recurrencesInWindow(new Date(r.nextDueDate), r.frequency, r.endDate ?? null, w.start, w.end, !!r.isFifthBusinessDay);
+      let n: number;
+      if (r.creditCardId) {
+        const card = creditCards.find((c) => c.id === r.creditCardId);
+        if (!card) continue;
+        n = creditCardRecurrencesForDueWindow(
+          new Date(r.nextDueDate), r.frequency, r.endDate ?? null,
+          w.start, w.end, !!r.isFifthBusinessDay, card,
+        ).count;
+      } else {
+        n = recurrencesInWindow(new Date(r.nextDueDate), r.frequency, r.endDate ?? null, w.start, w.end, !!r.isFifthBusinessDay);
+      }
       if (n === 0) continue;
       const total = Number(r.amount) * n;
       if (r.type === 'INCOME') recurringIncome += total;
