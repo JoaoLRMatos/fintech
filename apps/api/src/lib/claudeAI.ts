@@ -3,13 +3,49 @@ export interface ClaudeMessage {
   content: string;
 }
 
+/**
+ * Resolve a chave da API do Claude de forma robusta.
+ *
+ * Em alguns ambientes (ex.: Render) a variável foi nomeada com hífen
+ * ("claude-api-key"). Hífen não é um identificador válido de variável de
+ * ambiente segundo o POSIX, então dependendo de como o provedor injeta as
+ * variáveis o process.env pode não conseguir lê-la pelo nome exato. Para nunca
+ * mais quebrar por causa do nome, além dos nomes conhecidos nós varremos TODO o
+ * ambiente procurando qualquer variável cujo nome, normalizado (sem hífen, sem
+ * underscore, minúsculo), seja algo como "claudeapikey" ou "anthropicapikey".
+ */
+export function resolveClaudeApiKey(): string | undefined {
+  const known =
+    process.env.CLAUDE_API_KEY ||
+    process.env['claude-api-key'] ||
+    process.env.ANTHROPIC_API_KEY ||
+    process.env['anthropic-api-key'] ||
+    process.env.CLAUDE_KEY;
+  if (known) return known;
+
+  for (const [rawName, value] of Object.entries(process.env)) {
+    if (!value) continue;
+    const norm = rawName.toLowerCase().replace(/[-_\s]/g, '');
+    if (norm === 'claudeapikey' || norm === 'anthropicapikey' || norm === 'claudekey') {
+      return value;
+    }
+  }
+
+  // Último recurso: qualquer variável cujo valor pareça uma chave da Anthropic.
+  for (const value of Object.values(process.env)) {
+    if (value && value.startsWith('sk-ant-')) return value;
+  }
+
+  return undefined;
+}
+
 export async function claudeChat(
   messages: ClaudeMessage[],
   system?: string,
   temperature = 0.1,
   maxTokens = 1536
 ): Promise<string> {
-  const apiKey = process.env['claude-api-key'] || process.env.CLAUDE_API_KEY;
+  const apiKey = resolveClaudeApiKey();
   if (!apiKey) {
     throw new Error('CLAUDE_API_KEY ou claude-api-key não configurada no ambiente');
   }
@@ -70,7 +106,7 @@ export async function claudeToolCall<T = any>(
   maxTokens = 1536,
   maxRetries = 2,
 ): Promise<T> {
-  const apiKey = process.env['claude-api-key'] || process.env.CLAUDE_API_KEY;
+  const apiKey = resolveClaudeApiKey();
   if (!apiKey) {
     throw new Error('CLAUDE_API_KEY ou claude-api-key não configurada no ambiente');
   }
