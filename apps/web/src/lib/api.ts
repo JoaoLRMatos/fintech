@@ -108,6 +108,26 @@ export const api = {
     summary: () => request<any>('/api/dashboard/summary'),
     monthly: (months?: number) => request<any[]>(`/api/dashboard/monthly?months=${months || 6}`),
   },
+  budget: {
+    list: (year: number, month: number) => request<any[]>(`/api/budget?year=${year}&month=${month}`),
+    save: (data: any) => request<any>('/api/budget', { method: 'POST', body: JSON.stringify(data) }),
+    delete: (id: string) => request<any>(`/api/budget/${id}`, { method: 'DELETE' }),
+  },
+  plannedEvents: {
+    list: (params?: Record<string, string>) => {
+      const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+      return request<any[]>(`/api/planned-events${qs}`);
+    },
+    create: (data: any) => request<any>('/api/planned-events', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: any) => request<any>(`/api/planned-events/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) => request<any>(`/api/planned-events/${id}`, { method: 'DELETE' }),
+  },
+  proportionalRules: {
+    list: () => request<any[]>('/api/proportional-rules'),
+    create: (data: any) => request<any>('/api/proportional-rules', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: any) => request<any>(`/api/proportional-rules/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) => request<any>(`/api/proportional-rules/${id}`, { method: 'DELETE' }),
+  },
   whatsapp: {
     qr: (clientId: string) => request<{ clientId: string; status: string; hasQr: boolean; qrImage: string | null }>(`/api/whatsapp/qr/${clientId}`),
     status: (clientId: string) => request<{ clientId: string; status: string; hasQr: boolean }>(`/api/whatsapp/status/${clientId}`),

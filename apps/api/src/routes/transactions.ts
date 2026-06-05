@@ -12,8 +12,10 @@ export async function transactionRoutes(app: FastifyInstance) {
       type: z.enum(['INCOME', 'EXPENSE', 'TRANSFER']).optional(),
       categoryId: z.string().optional(),
       accountId: z.string().optional(),
+      creditCardId: z.string().optional(),
       from: z.string().optional(),
       to: z.string().optional(),
+      search: z.string().optional(),
       page: z.coerce.number().min(1).default(1),
       limit: z.coerce.number().min(1).max(100).default(30),
     }).parse(request.query);
@@ -22,6 +24,8 @@ export async function transactionRoutes(app: FastifyInstance) {
     if (query.type) where.type = query.type;
     if (query.categoryId) where.categoryId = query.categoryId;
     if (query.accountId) where.accountId = query.accountId;
+    if (query.creditCardId) where.creditCardId = query.creditCardId;
+    if (query.search) where.description = { contains: query.search, mode: 'insensitive' };
     if (query.from || query.to) {
       where.occurredAt = {};
       if (query.from) (where.occurredAt as Record<string, unknown>).gte = new Date(query.from);

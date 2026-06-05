@@ -329,25 +329,51 @@ export function CreditCardsPage() {
               {bill.transactions.length === 0 ? (
                 <p className="text-center text-sm text-slate-500 py-6">Nenhuma compra nesta fatura</p>
               ) : (
-                <div className="space-y-0.5">
-                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Compras ({bill.transactions.length})</p>
-                  {bill.transactions.map((tx: any) => (
-                    <div key={tx.id} className="flex items-center justify-between rounded-lg px-3 py-2.5 hover:bg-slate-800/60 transition-colors">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-200 flex items-center gap-1.5 truncate">
-                          {tx.paidAt && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-400" />}
-                          {tx.description}
-                        </p>
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          {new Date(tx.occurredAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
-                          {tx.category?.name && <span className="ml-1.5">&middot; {tx.category.name}</span>}
-                        </p>
+                <div className="space-y-4">
+                  {/* Breakdown por categoria */}
+                  {(() => {
+                    const catMap: Record<string, { name: string; color: string | null; total: number }> = {};
+                    for (const tx of bill.transactions) {
+                      const key = tx.category?.id ?? '__sem_categoria__';
+                      if (!catMap[key]) catMap[key] = { name: tx.category?.name ?? 'Sem categoria', color: tx.category?.color ?? null, total: 0 };
+                      catMap[key].total += Number(tx.amount);
+                    }
+                    const cats = Object.values(catMap).sort((a, b) => b.total - a.total);
+                    return (
+                      <div className="rounded-xl bg-slate-800/50 px-4 py-3 space-y-2">
+                        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Por categoria</p>
+                        {cats.map(cat => (
+                          <div key={cat.name} className="flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: cat.color ?? '#94a3b8' }} />
+                            <span className="flex-1 text-xs text-slate-300 truncate">{cat.name}</span>
+                            <span className="text-xs font-semibold text-rose-400">{fmt(cat.total)}</span>
+                            <span className="text-xs text-slate-500 w-10 text-right">{Math.round((cat.total / bill.total) * 100)}%</span>
+                          </div>
+                        ))}
                       </div>
-                      <span className={`ml-4 text-sm font-semibold shrink-0 ${tx.paidAt ? 'text-slate-500 line-through' : 'text-rose-400'}`}>
-                        {fmt(Number(tx.amount))}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })()}
+
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">Compras ({bill.transactions.length})</p>
+                    {bill.transactions.map((tx: any) => (
+                      <div key={tx.id} className="flex items-center justify-between rounded-lg px-3 py-2.5 hover:bg-slate-800/60 transition-colors">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-200 flex items-center gap-1.5 truncate">
+                            {tx.paidAt && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-400" />}
+                            {tx.description}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {new Date(tx.occurredAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                            {tx.category?.name && <span className="ml-1.5">&middot; {tx.category.name}</span>}
+                          </p>
+                        </div>
+                        <span className={`ml-4 text-sm font-semibold shrink-0 ${tx.paidAt ? 'text-slate-500 line-through' : 'text-rose-400'}`}>
+                          {fmt(Number(tx.amount))}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

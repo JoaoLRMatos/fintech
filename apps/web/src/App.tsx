@@ -14,6 +14,7 @@ import { CreditCardsPage } from './pages/CreditCardsPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { ProjectionPage } from './pages/ProjectionPage';
 import { ImportPage } from './pages/ImportPage';
+import { PlanningPage } from './pages/PlanningPage';
 
 function GuestRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -40,6 +41,7 @@ export default function App() {
             <Route path="/recurring" element={<RecurringPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/projection" element={<ProjectionPage />} />
+            <Route path="/planning" element={<PlanningPage />} />
             <Route path="/whatsapp" element={<WhatsAppPage />} />
           </Route>
 

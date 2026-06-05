@@ -20,6 +20,7 @@ const emptyForm = () => ({
   type: 'EXPENSE',
   frequency: 'MONTHLY',
   nextDueDate: new Date().toISOString().slice(0, 10),
+  endDate: '',
   isFifthBusinessDay: false,
   creditCardId: '',
   accountId: '',
@@ -82,6 +83,7 @@ export function RecurringPage() {
       nextDueDate: r.nextDueDate
         ? new Date(r.nextDueDate).toISOString().slice(0, 10)
         : new Date().toISOString().slice(0, 10),
+      endDate: r.endDate ? new Date(r.endDate).toISOString().slice(0, 10) : '',
       isFifthBusinessDay: !!r.isFifthBusinessDay,
       creditCardId: r.creditCardId ?? '',
       accountId: r.accountId ?? '',
@@ -99,6 +101,7 @@ export function RecurringPage() {
       type: form.type as 'INCOME' | 'EXPENSE',
       frequency: form.frequency as any,
       nextDueDate: form.nextDueDate,
+      endDate: form.endDate || undefined,
       isFifthBusinessDay: form.frequency === 'MONTHLY' ? form.isFifthBusinessDay : false,
     };
     if (useCard) {
@@ -196,7 +199,7 @@ export function RecurringPage() {
             )}
           </div>
 
-          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
             {!form.isFifthBusinessDay && (
               <div>
                 <label className="mb-1 block text-xs text-slate-400">
@@ -211,6 +214,16 @@ export function RecurringPage() {
                 />
               </div>
             )}
+            <div>
+              <label className="mb-1 block text-xs text-slate-400">Válido até (opcional)</label>
+              <input
+                type="date"
+                value={form.endDate}
+                onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))}
+                className={inputCls}
+              />
+              <p className="mt-1 text-[11px] text-slate-500">Deixe em branco para repetir indefinidamente.</p>
+            </div>
             {form.frequency === 'MONTHLY' && (
               <div className="flex items-center gap-2.5 pt-6">
                 <input

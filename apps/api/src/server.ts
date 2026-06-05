@@ -22,6 +22,9 @@ import { creditCardRoutes } from './routes/credit-cards.js';
 import { reportRoutes } from './routes/reports.js';
 import { projectionRoutes } from './routes/projection.js';
 import { importRoutes } from './routes/import.js';
+import { budgetRoutes } from './routes/budget.js';
+import { plannedEventRoutes } from './routes/planned-events.js';
+import { proportionalRuleRoutes } from './routes/proportional-rules.js';
 import { processRecurringRules } from './lib/recurringProcessor.js';
 import { runProactiveAlerts } from './lib/proactiveAlerts.js';
 import multipart from '@fastify/multipart';
@@ -75,6 +78,9 @@ await app.register(creditCardRoutes);
 await app.register(reportRoutes);
 await app.register(projectionRoutes);
 await app.register(importRoutes);
+await app.register(budgetRoutes);
+await app.register(plannedEventRoutes);
+await app.register(proportionalRuleRoutes);
 
 app.setErrorHandler((error: Error, _request, reply) => {
   if (error.name === 'ZodError') {

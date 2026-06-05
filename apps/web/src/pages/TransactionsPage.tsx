@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, X, Filter } from 'lucide-react';
 
 function fmt(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -11,54 +11,48 @@ export function TransactionsPage() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<any>(null);
-  const [typeFilter, setTypeFilter] = useState('');
   const [page, setPage] = useState(1);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Filters
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [accountFilter, setAccountFilter] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
 
   const params: Record<string, string> = { page: String(page), limit: '20' };
+  if (search) params.search = search;
   if (typeFilter) params.type = typeFilter;
+  if (categoryFilter) params.categoryId = categoryFilter;
+  if (accountFilter) params.accountId = accountFilter;
+  if (from) params.from = from;
+  if (to) params.to = to;
 
-  const { data, isLoading } = useQuery({ queryKey: ['transactions', params], queryFn: () => api.transactions.list(params) });
+  const { data, isLoading } = useQuery({
+    queryKey: ['transactions', params],
+    queryFn: () => api.transactions.list(params),
+  });
   const { data: categories } = useQuery({ queryKey: ['categories'], queryFn: api.categories.list });
   const { data: accounts } = useQuery({ queryKey: ['accounts'], queryFn: api.accounts.list });
   const { data: creditCards } = useQuery({ queryKey: ['credit-cards'], queryFn: api.creditCards.list });
 
   const createMut = useMutation({
     mutationFn: api.transactions.create,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['transactions'] });
-      qc.invalidateQueries({ queryKey: ['dashboard-summary'] });
-      setShowForm(false);
-      resetForm();
-    },
-    onError: (err: any) => {
-      alert(`Erro ao criar lançamento: ${err.message}`);
-    }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); setShowForm(false); resetForm(); },
+    onError: (err: any) => alert(`Erro ao criar lançamento: ${err.message}`),
   });
-
   const updateMut = useMutation({
     mutationFn: ({ id, ...d }: any) => api.transactions.update(id, d),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['transactions'] });
-      qc.invalidateQueries({ queryKey: ['dashboard-summary'] });
-      setEditing(null);
-      setShowForm(false);
-      resetForm();
-    },
-    onError: (err: any) => {
-      alert(`Erro ao atualizar lançamento: ${err.message}`);
-    }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['transactions'] }); setEditing(null); setShowForm(false); resetForm(); },
+    onError: (err: any) => alert(`Erro ao atualizar lançamento: ${err.message}`),
   });
-
   const deleteMut = useMutation({
     mutationFn: api.transactions.delete,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['transactions'] });
-      qc.invalidateQueries({ queryKey: ['dashboard-summary'] });
-    },
-    onError: (err: any) => {
-      alert(`Erro ao excluir lançamento: ${err.message}`);
-    }
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['transactions'] }),
+    onError: (err: any) => alert(`Erro ao excluir lançamento: ${err.message}`),
   });
 
   const [form, setForm] = useState({ type: 'EXPENSE', amount: '', description: '', occurredAt: new Date().toISOString().slice(0, 10), categoryId: '', accountId: '', creditCardId: '', paymentMethod: '', notes: '' });
@@ -69,43 +63,28 @@ export function TransactionsPage() {
 
   function startEdit(tx: any) {
     setEditing(tx);
-    setForm({
-      type: tx.type,
-      amount: String(tx.amount),
-      description: tx.description,
-      occurredAt: tx.occurredAt?.slice(0, 10) ?? new Date().toISOString().slice(0, 10),
-      categoryId: tx.categoryId ?? '',
-      accountId: tx.accountId ?? '',
-      creditCardId: tx.creditCardId ?? '',
-      paymentMethod: tx.paymentMethod ?? '',
-      notes: tx.notes ?? '',
-    });
+    setForm({ type: tx.type, amount: String(tx.amount), description: tx.description, occurredAt: tx.occurredAt?.slice(0, 10) ?? new Date().toISOString().slice(0, 10), categoryId: tx.categoryId ?? '', accountId: tx.accountId ?? '', creditCardId: tx.creditCardId ?? '', paymentMethod: tx.paymentMethod ?? '', notes: tx.notes ?? '' });
     setShowForm(true);
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const isCredit = form.paymentMethod === 'credit';
-    const payload = {
-      ...form,
-      amount: Number(form.amount),
-      categoryId: form.categoryId || undefined,
-      accountId: isCredit ? undefined : (form.accountId || undefined),
-      creditCardId: isCredit ? (form.creditCardId || undefined) : undefined,
-      paymentMethod: form.paymentMethod || undefined,
-      notes: form.notes || undefined,
-    };
-    if (editing) {
-      updateMut.mutate({ id: editing.id, ...payload });
-    } else {
-      createMut.mutate(payload);
-    }
+    const payload = { ...form, amount: Number(form.amount), categoryId: form.categoryId || undefined, accountId: isCredit ? undefined : (form.accountId || undefined), creditCardId: isCredit ? (form.creditCardId || undefined) : undefined, paymentMethod: form.paymentMethod || undefined, notes: form.notes || undefined };
+    if (editing) updateMut.mutate({ id: editing.id, ...payload });
+    else createMut.mutate(payload);
   }
 
+  function clearFilters() {
+    setSearch(''); setTypeFilter(''); setCategoryFilter(''); setAccountFilter(''); setFrom(''); setTo(''); setPage(1);
+  }
+
+  const hasActiveFilters = !!(search || typeFilter || categoryFilter || accountFilter || from || to);
   const inputCls = 'w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none';
+  const filterCls = 'rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none';
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <h1 className="text-2xl font-bold">Lançamentos</h1>
         <button onClick={() => { setEditing(null); resetForm(); setShowForm(!showForm); }} className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
@@ -130,7 +109,7 @@ export function TransactionsPage() {
             </div>
             <div>
               <label className="mb-1 block text-xs text-slate-400">Descrição</label>
-              <input type="text" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} required className={inputCls} placeholder="Ex: Gasolina do carro" />
+              <input type="text" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} required className={inputCls} placeholder="Ex: Gasolina" />
             </div>
             <div>
               <label className="mb-1 block text-xs text-slate-400">Data</label>
@@ -177,24 +156,84 @@ export function TransactionsPage() {
             <button type="submit" disabled={createMut.isPending || updateMut.isPending} className="flex-1 sm:flex-none rounded-lg bg-emerald-600 px-6 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50">
               {editing ? 'Salvar' : 'Criar'}
             </button>
-            <button type="button" onClick={() => { setShowForm(false); setEditing(null); }} className="flex-1 sm:flex-none rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800 text-center">Cancelar</button>
+            <button type="button" onClick={() => { setShowForm(false); setEditing(null); }} className="flex-1 sm:flex-none rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-400 hover:bg-slate-800">Cancelar</button>
           </div>
         </form>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        {['', 'EXPENSE', 'INCOME'].map(t => (
-          <button key={t} onClick={() => { setTypeFilter(t); setPage(1); }} className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${typeFilter === t ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}>
-            {t === '' ? 'Todos' : t === 'EXPENSE' ? 'Despesas' : 'Receitas'}
+      {/* Barra de busca + filtros */}
+      <div className="space-y-3">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+            <input
+              type="text"
+              placeholder="Buscar por descrição..."
+              value={search}
+              onChange={e => { setSearch(e.target.value); setPage(1); }}
+              className="w-full rounded-lg border border-slate-700 bg-slate-800 pl-9 pr-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none"
+            />
+            {search && (
+              <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <button
+            onClick={() => setShowFilters(f => !f)}
+            className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${showFilters || hasActiveFilters ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400' : 'border-slate-700 bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+          >
+            <Filter className="h-4 w-4" />
+            <span className="hidden sm:inline">Filtros</span>
+            {hasActiveFilters && <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 text-[10px] font-bold text-white">{[typeFilter, categoryFilter, accountFilter, from, to].filter(Boolean).length}</span>}
           </button>
-        ))}
+          {hasActiveFilters && (
+            <button onClick={clearFilters} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-400 hover:bg-slate-800">
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
+        {showFilters && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+            <div>
+              <label className="mb-1 block text-xs text-slate-500">Tipo</label>
+              <select value={typeFilter} onChange={e => { setTypeFilter(e.target.value); setPage(1); }} className={filterCls}>
+                <option value="">Todos</option>
+                <option value="EXPENSE">Despesas</option>
+                <option value="INCOME">Receitas</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-slate-500">Categoria</label>
+              <select value={categoryFilter} onChange={e => { setCategoryFilter(e.target.value); setPage(1); }} className={filterCls}>
+                <option value="">Todas</option>
+                {categories?.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-slate-500">Conta</label>
+              <select value={accountFilter} onChange={e => { setAccountFilter(e.target.value); setPage(1); }} className={filterCls}>
+                <option value="">Todas</option>
+                {accounts?.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-slate-500">De</label>
+              <input type="date" value={from} onChange={e => { setFrom(e.target.value); setPage(1); }} className={filterCls} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-slate-500">Até</label>
+              <input type="date" value={to} onChange={e => { setTo(e.target.value); setPage(1); }} className={filterCls} />
+            </div>
+          </div>
+        )}
       </div>
 
       {isLoading ? (
         <div className="flex h-32 items-center justify-center"><div className="h-6 w-6 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" /></div>
       ) : (
         <div className="rounded-2xl border border-slate-800 bg-slate-900 overflow-hidden">
-          {/* Desktop Table */}
           <table className="hidden md:table w-full text-sm">
             <thead>
               <tr className="border-b border-slate-800 text-left text-xs text-slate-500">
@@ -239,13 +278,12 @@ export function TransactionsPage() {
             </tbody>
           </table>
 
-          {/* Mobile ListView */}
           <div className="block md:hidden divide-y divide-slate-800/60">
             {data?.data?.length === 0 && (
               <div className="px-4 py-8 text-center text-slate-500 text-sm">Nenhum lançamento encontrado.</div>
             )}
             {data?.data?.map((tx: any) => (
-              <div key={tx.id} className="p-4 flex flex-col gap-2 hover:bg-slate-800/10">
+              <div key={tx.id} className="p-4 flex flex-col gap-2">
                 <div className="flex justify-between items-start gap-2">
                   <span className="font-semibold text-slate-100 text-sm line-clamp-2">{tx.description}</span>
                   <span className={`text-sm font-semibold shrink-0 ${tx.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -254,30 +292,20 @@ export function TransactionsPage() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
                   <span>{new Date(tx.occurredAt).toLocaleDateString('pt-BR')}</span>
-                  <span>&middot;</span>
                   {tx.category && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-slate-800 px-2 py-0.5 text-[10px]">
                       <span className="h-1.5 w-1.5 rounded-full" style={{ background: tx.category.color ?? '#64748b' }} />
                       {tx.category.name}
                     </span>
                   )}
-                  <span>&middot;</span>
                   <span className="truncate max-w-[100px]">
-                    {tx.creditCardId
-                      ? `💳 ${creditCards?.find((c: any) => c.id === tx.creditCardId)?.name ?? 'Crédito'}`
-                      : (tx.account?.name ?? '—')}
+                    {tx.creditCardId ? `💳 ${creditCards?.find((c: any) => c.id === tx.creditCardId)?.name ?? 'Crédito'}` : (tx.account?.name ?? '—')}
                   </span>
                 </div>
-                {tx.notes && (
-                  <p className="text-xs text-slate-400 italic line-clamp-1 mt-0.5">{tx.notes}</p>
-                )}
-                <div className="flex justify-end gap-2 border-t border-slate-800/30 pt-2 mt-1">
-                  <button onClick={() => startEdit(tx)} className="flex items-center gap-1.5 rounded bg-slate-800 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700">
-                    <Pencil className="h-3 w-3" /> Editar
-                  </button>
-                  <button onClick={() => setDeleteTarget(tx)} className="flex items-center gap-1.5 rounded bg-slate-800/50 px-3 py-1.5 text-xs text-slate-400 hover:bg-rose-950/20 hover:text-rose-400">
-                    <Trash2 className="h-3 w-3" /> Excluir
-                  </button>
+                {tx.notes && <p className="text-xs text-slate-400 italic line-clamp-1">{tx.notes}</p>}
+                <div className="flex justify-end gap-2 border-t border-slate-800/30 pt-2">
+                  <button onClick={() => startEdit(tx)} className="flex items-center gap-1.5 rounded bg-slate-800 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700"><Pencil className="h-3 w-3" /> Editar</button>
+                  <button onClick={() => setDeleteTarget(tx)} className="flex items-center gap-1.5 rounded bg-slate-800/50 px-3 py-1.5 text-xs text-slate-400 hover:bg-rose-950/20 hover:text-rose-400"><Trash2 className="h-3 w-3" /> Excluir</button>
                 </div>
               </div>
             ))}
@@ -297,43 +325,19 @@ export function TransactionsPage() {
 
       {deleteTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="relative w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-900 p-6 shadow-2xl space-y-5 animate-in fade-in duration-200">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-900 p-6 space-y-5">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-rose-500/10 text-rose-500 mx-auto">
               <Trash2 className="h-5 w-5" />
             </div>
             <div className="text-center space-y-2">
-              <h3 className="text-lg font-semibold text-slate-100">Excluir lançamento</h3>
-              <p className="text-sm text-slate-400">
-                Tem certeza que deseja excluir <span className="font-semibold text-slate-200">"{deleteTarget.description}"</span>?
-              </p>
-              <p className="text-xs text-slate-500">
-                Esta ação removerá permanentemente o lançamento no valor de{' '}
-                <span className={`font-semibold ${deleteTarget.type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {deleteTarget.type === 'INCOME' ? '+' : '-'} {fmt(Number(deleteTarget.amount))}
-                </span>
-                .
-              </p>
+              <h3 className="text-lg font-semibold">Excluir lançamento</h3>
+              <p className="text-sm text-slate-400">Tem certeza que deseja excluir <span className="font-semibold text-slate-200">"{deleteTarget.description}"</span>?</p>
             </div>
             <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  deleteMut.mutate(deleteTarget.id);
-                  setDeleteTarget(null);
-                }}
-                disabled={deleteMut.isPending}
-                className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white hover:bg-rose-500 transition-colors shadow-lg shadow-rose-900/20 disabled:opacity-50"
-              >
+              <button onClick={() => { deleteMut.mutate(deleteTarget.id); setDeleteTarget(null); }} disabled={deleteMut.isPending} className="flex-1 rounded-lg bg-rose-600 py-2.5 text-sm font-semibold text-white hover:bg-rose-500 disabled:opacity-50">
                 {deleteMut.isPending ? 'Excluindo...' : 'Sim, excluir'}
               </button>
-              <button
-                type="button"
-                disabled={deleteMut.isPending}
-                onClick={() => setDeleteTarget(null)}
-                className="flex-1 rounded-lg border border-slate-700 bg-slate-800/40 py-2.5 text-sm font-semibold text-slate-300 hover:bg-slate-800 transition-colors disabled:opacity-50"
-              >
-                Cancelar
-              </button>
+              <button onClick={() => setDeleteTarget(null)} className="flex-1 rounded-lg border border-slate-700 py-2.5 text-sm text-slate-300 hover:bg-slate-800">Cancelar</button>
             </div>
           </div>
         </div>

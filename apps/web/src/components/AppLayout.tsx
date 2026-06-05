@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, ArrowLeftRight, Tag, Wallet, LogOut, MessageCircleMore, Smartphone, Repeat, CreditCard, BarChart2, Upload, Sparkles, Menu, X } from 'lucide-react';
+import { LayoutDashboard, ArrowLeftRight, Tag, Wallet, LogOut, MessageCircleMore, Smartphone, Repeat, CreditCard, BarChart2, Upload, Sparkles, Menu, X, CalendarDays } from 'lucide-react';
 
 const links = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -11,6 +11,7 @@ const links = [
   { to: '/accounts', label: 'Contas', icon: Wallet },
   { to: '/credit-cards', label: 'Cartões', icon: CreditCard },
   { to: '/recurring', label: 'Recorrentes', icon: Repeat },
+  { to: '/planning', label: 'Planejamento', icon: CalendarDays },
   { to: '/reports', label: 'Relatórios', icon: BarChart2 },
   { to: '/projection', label: 'Projeção', icon: Sparkles },
   { to: '/whatsapp', label: 'WhatsApp', icon: Smartphone },
