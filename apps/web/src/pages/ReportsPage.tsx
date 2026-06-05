@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, Legend, PieChart, Pie, Cell } from 'recharts';
-import { TrendingUp, TrendingDown, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Wallet } from 'lucide-react';
+import { TrendingUp, TrendingDown, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Wallet, Trash2 } from 'lucide-react';
 
 function fmt(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -246,6 +246,31 @@ export function ReportsPage() {
 }
 
 function MonthDetailView({ data }: { data: any }) {
+  const qc = useQueryClient();
+  const { data: categories } = useQuery({ queryKey: ['categories'], queryFn: api.categories.list });
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['reports-month-detail'] });
+    qc.invalidateQueries({ queryKey: ['reports-monthly'] });
+    qc.invalidateQueries({ queryKey: ['dashboard-summary'] });
+    qc.invalidateQueries({ queryKey: ['transactions'] });
+  };
+
+  const updateMut = useMutation({
+    mutationFn: ({ id, ...d }: any) => api.transactions.update(id, d),
+    onSuccess: invalidate,
+    onError: (err: any) => alert(`Erro ao atualizar lançamento: ${err.message}`),
+  });
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => api.transactions.delete(id),
+    onSuccess: invalidate,
+    onError: (err: any) => alert(`Erro ao excluir lançamento: ${err.message}`),
+  });
+
+  const txs = data.transactions ?? [];
+  const expenses = data.expenseByCategory ?? [];
+  const incomes = data.incomeByCategory ?? [];
+
   const summaryCards = [
     { label: 'Receitas', value: data.income, color: 'text-emerald-400', icon: TrendingUp },
     { label: 'Despesas', value: data.expense, color: 'text-rose-400', icon: TrendingDown },
@@ -254,9 +279,6 @@ function MonthDetailView({ data }: { data: any }) {
       ? [{ label: 'Saldo acumulado previsto', value: data.closingBalance, color: data.closingBalance >= 0 ? 'text-emerald-400' : 'text-rose-400', icon: TrendingUp }]
       : []),
   ];
-
-  const expenses = data.expenseByCategory ?? [];
-  const incomes = data.incomeByCategory ?? [];
 
   return (
     <div className="space-y-6">
@@ -282,9 +304,10 @@ function MonthDetailView({ data }: { data: any }) {
 
       {/* Gastos por categoria */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5">
-        <h2 className="mb-4 text-base sm:text-lg font-semibold">Gastos por categoria</h2>
+        <h2 className="text-base sm:text-lg font-semibold">Gastos por categoria</h2>
+        <p className="mb-4 mt-0.5 text-xs text-slate-500">Toque numa categoria para ver e editar os lançamentos.</p>
         {expenses.length > 0 ? (
-          <div className="grid grid-cols-1 lg:grid-cols-[0.8fr,1.2fr] gap-6 items-center">
+          <div className="grid grid-cols-1 lg:grid-cols-[0.8fr,1.2fr] gap-6 lg:items-start">
             <div className="h-[220px] w-full min-w-0">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -295,24 +318,9 @@ function MonthDetailView({ data }: { data: any }) {
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="space-y-3">
+            <div className="space-y-2">
               {expenses.map((c: any) => (
-                <div key={c.categoryId}>
-                  <div className="flex items-center justify-between gap-2 mb-1 text-sm">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: c.color }} />
-                      <span className="text-slate-200 truncate">{c.name}</span>
-                      <span className="text-xs text-slate-500 shrink-0">{c.count}×</span>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-slate-100 font-semibold">{fmt(c.total)}</span>
-                      <span className="text-xs text-slate-500 w-10 text-right">{c.percent.toFixed(0)}%</span>
-                    </div>
-                  </div>
-                  <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
-                    <div className="h-full rounded-full" style={{ width: `${c.percent}%`, background: c.color }} />
-                  </div>
-                </div>
+                <CategoryRow key={c.categoryId} cat={c} type="EXPENSE" transactions={txs} categories={categories} updateMut={updateMut} deleteMut={deleteMut} />
               ))}
             </div>
           </div>
@@ -324,27 +332,86 @@ function MonthDetailView({ data }: { data: any }) {
       {/* Receitas por categoria */}
       {incomes.length > 0 && (
         <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5">
-          <h2 className="mb-4 text-base sm:text-lg font-semibold">Receitas por categoria</h2>
-          <div className="space-y-3">
+          <h2 className="text-base sm:text-lg font-semibold">Receitas por categoria</h2>
+          <p className="mb-4 mt-0.5 text-xs text-slate-500">Toque numa categoria para ver e editar os lançamentos.</p>
+          <div className="space-y-2">
             {incomes.map((c: any) => (
-              <div key={c.categoryId}>
-                <div className="flex items-center justify-between gap-2 mb-1 text-sm">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: c.color }} />
-                    <span className="text-slate-200 truncate">{c.name}</span>
-                    <span className="text-xs text-slate-500 shrink-0">{c.count}×</span>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-emerald-400 font-semibold">{fmt(c.total)}</span>
-                    <span className="text-xs text-slate-500 w-10 text-right">{c.percent.toFixed(0)}%</span>
-                  </div>
-                </div>
-                <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
-                  <div className="h-full rounded-full bg-emerald-500" style={{ width: `${c.percent}%` }} />
-                </div>
-              </div>
+              <CategoryRow key={c.categoryId} cat={c} type="INCOME" transactions={txs} categories={categories} updateMut={updateMut} deleteMut={deleteMut} />
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CategoryRow({ cat, type, transactions, categories, updateMut, deleteMut }: any) {
+  const [open, setOpen] = useState(false);
+  const items = transactions.filter((t: any) => (t.categoryId ?? '__none__') === cat.categoryId && t.type === type);
+  const barColor = type === 'INCOME' ? '#22c55e' : cat.color;
+  const catOptions = (categories ?? []).filter((c: any) => !c.kind || c.kind === type);
+
+  return (
+    <div>
+      <button onClick={() => setOpen(o => !o)} className="w-full text-left group">
+        <div className="flex items-center justify-between gap-2 mb-1 text-sm">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: cat.color }} />
+            <span className="text-slate-200 truncate group-hover:text-white">{cat.name}</span>
+            <span className="text-xs text-slate-500 shrink-0">{cat.count}×</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className={`font-semibold ${type === 'INCOME' ? 'text-emerald-400' : 'text-slate-100'}`}>{fmt(cat.total)}</span>
+            <span className="text-xs text-slate-500 w-9 text-right">{cat.percent.toFixed(0)}%</span>
+            {open ? <ChevronUp className="h-3.5 w-3.5 text-slate-500" /> : <ChevronDown className="h-3.5 w-3.5 text-slate-500" />}
+          </div>
+        </div>
+        <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+          <div className="h-full rounded-full" style={{ width: `${cat.percent}%`, background: barColor }} />
+        </div>
+      </button>
+
+      {open && (
+        <div className="mt-2 mb-3 space-y-1.5 rounded-lg bg-slate-950/40 p-2">
+          {items.length === 0 && <p className="px-1 py-1 text-xs text-slate-500">Sem lançamentos detalhados.</p>}
+          {items.map((t: any) => (
+            <div key={t.id} className="rounded-md bg-slate-900/60 px-2.5 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm text-slate-200 truncate">{t.description}</span>
+                <span className={`text-sm font-semibold shrink-0 ${type === 'INCOME' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                  {type === 'INCOME' ? '+' : '-'}{fmt(t.amount)}
+                </span>
+              </div>
+              <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] text-slate-500">{new Date(t.occurredAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>
+                {t.paymentMethod === 'credit' && <span className="text-[11px] text-violet-400">💳 crédito</span>}
+                {t.isProjection ? (
+                  <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400 uppercase tracking-wide">previsto</span>
+                ) : (
+                  <>
+                    <select
+                      value={t.categoryId ?? ''}
+                      onChange={e => updateMut.mutate({ id: t.id, categoryId: e.target.value || null })}
+                      disabled={updateMut.isPending}
+                      className="rounded border border-slate-700 bg-slate-800 px-1.5 py-1 text-[11px] text-slate-200 focus:border-emerald-500 focus:outline-none"
+                      title="Mudar categoria"
+                    >
+                      <option value="">Sem categoria</option>
+                      {catOptions.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    <button
+                      onClick={() => deleteMut.mutate(t.id)}
+                      disabled={deleteMut.isPending}
+                      className="ml-auto rounded p-1 text-slate-500 hover:bg-slate-800 hover:text-rose-400 disabled:opacity-40"
+                      aria-label="Excluir lançamento"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

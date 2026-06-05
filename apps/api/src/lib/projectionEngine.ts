@@ -81,7 +81,7 @@ function advanceRule(date: Date, frequency: string, isFifthBusinessDay?: boolean
 }
 
 /** Quantas vezes uma regra recorrente dispara dentro de [start, end]. */
-function recurrencesInWindow(nextDueDate: Date, frequency: string, endDate: Date | null, start: Date, end: Date, isFifthBusinessDay?: boolean): number {
+export function recurrencesInWindow(nextDueDate: Date, frequency: string, endDate: Date | null, start: Date, end: Date, isFifthBusinessDay?: boolean): number {
   let d = new Date(nextDueDate);
   // adianta até a janela
   let guard = 0;
@@ -99,6 +99,60 @@ function recurrencesInWindow(nextDueDate: Date, frequency: string, endDate: Date
 export async function currentBalance(workspaceId: string): Promise<number> {
   const accounts = await prisma.account.findMany({ where: { workspaceId }, select: { balance: true } });
   return accounts.reduce((s, a) => s + Number(a.balance), 0);
+}
+
+export interface PendingRecurringEntry {
+  id: string;
+  description: string;
+  amount: number;
+  type: 'INCOME' | 'EXPENSE';
+  occurredAt: Date;
+  categoryId: string | null;
+  category: { id: string; name: string; color: string | null } | null;
+  isProjection: true;
+}
+
+/**
+ * Recorrentes que AINDA vão disparar dentro de [start, end] e que ainda não
+ * viraram transação (a regra só materializa no vencimento). Útil para mostrar,
+ * no mês corrente, o salário/vale/contas que ainda vão cair — sem duplicar os já
+ * lançados (esses já tiveram o nextDueDate avançado para fora da janela).
+ */
+export async function pendingRecurringForMonth(
+  workspaceId: string,
+  start: Date,
+  end: Date,
+): Promise<{ income: number; expense: number; entries: PendingRecurringEntry[] }> {
+  const [rules, categories] = await Promise.all([
+    prisma.recurringRule.findMany({ where: { workspaceId, active: true } }),
+    prisma.category.findMany({ where: { workspaceId } }),
+  ]);
+
+  let income = 0;
+  let expense = 0;
+  const entries: PendingRecurringEntry[] = [];
+
+  for (const r of rules) {
+    const n = recurrencesInWindow(new Date(r.nextDueDate), r.frequency, r.endDate ?? null, start, end, !!r.isFifthBusinessDay);
+    if (n === 0) continue;
+    const total = Number(r.amount) * n;
+    if (r.type === 'INCOME') income += total;
+    else expense += total;
+
+    const cat = r.categoryId ? categories.find((c) => c.id === r.categoryId) : undefined;
+    entries.push({
+      id: `recur-${r.id}`,
+      description: `[Previsto] ${r.description}`,
+      amount: total,
+      type: r.type as 'INCOME' | 'EXPENSE',
+      occurredAt: new Date(r.nextDueDate),
+      categoryId: cat?.id ?? null,
+      category: cat ? { id: cat.id, name: cat.name, color: cat.color } : null,
+      isProjection: true,
+    });
+  }
+
+  return { income, expense, entries };
 }
 
 export interface ProjectInput {

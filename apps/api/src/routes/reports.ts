@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
-import { projectMonths, currentBalance } from '../lib/projectionEngine.js';
+import { projectMonths, currentBalance, pendingRecurringForMonth } from '../lib/projectionEngine.js';
 import { processRecurringRules } from '../lib/recurringProcessor.js';
 
 export async function reportRoutes(app: FastifyInstance) {
@@ -72,7 +72,17 @@ export async function reportRoutes(app: FastifyInstance) {
         else if (tx.type === 'EXPENSE') expense += Number(tx.amount);
       }
 
-      result.push({ key, label, year, month, income, expense, balance: income - expense, isProjection: false, transactions: allTx });
+      // Mês atual (i === 0): inclui as recorrentes que ainda vão cair (salário,
+      // vale, contas) que ainda não viraram lançamento, sem duplicar as já caídas.
+      const transactions: any[] = [...allTx];
+      if (i === 0) {
+        const pending = await pendingRecurringForMonth(workspaceId, start, end);
+        income += pending.income;
+        expense += pending.expense;
+        transactions.push(...pending.entries);
+      }
+
+      result.push({ key, label, year, month, income, expense, balance: income - expense, isProjection: false, transactions });
     }
 
     // ── Meses futuros (projeção com saldo acumulado) ──
@@ -152,6 +162,9 @@ export async function reportRoutes(app: FastifyInstance) {
       return { income, expense, expenseMap, incomeMap };
     };
 
+    // Materializa recorrentes vencidas para o mês atual refletir o que já caiu.
+    await processRecurringRules().catch((err) => app.log.error(err, 'Erro ao processar recorrentes (month-detail)'));
+
     // ── Mês futuro: usa a projeção (recorrentes + parcelas + eventos + orçamento) ──
     const now = new Date();
     const offset = (year - now.getFullYear()) * 12 + (month - (now.getMonth() + 1));
@@ -166,9 +179,20 @@ export async function reportRoutes(app: FastifyInstance) {
       });
       const m = projected[offset - 1];
       if (!m) {
-        return { year, month, label, income: 0, expense: 0, balance: 0, transactionCount: 0, isProjection: true, expenseByCategory: [], incomeByCategory: [] };
+        return { year, month, label, income: 0, expense: 0, balance: 0, transactionCount: 0, isProjection: true, transactions: [], expenseByCategory: [], incomeByCategory: [] };
       }
-      const { expenseMap, incomeMap } = aggregate(m.transactions ?? []);
+      const projTxs = (m.transactions ?? []).map((t: any) => ({
+        id: t.id,
+        description: t.description,
+        amount: Number(t.amount),
+        type: t.type,
+        occurredAt: t.occurredAt,
+        categoryId: t.category?.id ?? null,
+        category: t.category ? { id: t.category.id, name: t.category.name, color: t.category.color } : null,
+        paymentMethod: t.paymentMethod ?? null,
+        isProjection: true,
+      }));
+      const { expenseMap, incomeMap } = aggregate(projTxs);
       return {
         year,
         month,
@@ -179,7 +203,8 @@ export async function reportRoutes(app: FastifyInstance) {
         openingBalance: m.openingBalance,
         closingBalance: m.closingBalance,
         isProjection: true,
-        transactionCount: (m.transactions ?? []).length,
+        transactionCount: projTxs.length,
+        transactions: projTxs,
         expenseByCategory: toRanked(expenseMap, m.expense),
         incomeByCategory: toRanked(incomeMap, m.income),
       };
@@ -198,7 +223,28 @@ export async function reportRoutes(app: FastifyInstance) {
       include: { category: true },
     });
 
-    const { income, expense, expenseMap, incomeMap } = aggregate(allTx);
+    const realTxs = allTx.map((t) => ({
+      id: t.id,
+      description: t.description,
+      amount: Number(t.amount),
+      type: t.type,
+      occurredAt: t.occurredAt,
+      categoryId: t.categoryId ?? null,
+      category: t.category ? { id: t.category.id, name: t.category.name, color: t.category.color } : null,
+      paymentMethod: t.paymentMethod ?? null,
+      isProjection: false,
+    }));
+
+    // Mês atual: soma as recorrentes que ainda vão cair este mês (salário/vale/contas),
+    // sem duplicar as já lançadas. Mostradas como "[Previsto]" e não-editáveis.
+    let pendingEntries: any[] = [];
+    if (offset === 0) {
+      const pending = await pendingRecurringForMonth(workspaceId, start, end);
+      pendingEntries = pending.entries.map((e) => ({ ...e, paymentMethod: null }));
+    }
+
+    const combined = [...realTxs, ...pendingEntries];
+    const { income, expense, expenseMap, incomeMap } = aggregate(combined);
 
     return {
       year,
@@ -208,7 +254,9 @@ export async function reportRoutes(app: FastifyInstance) {
       expense,
       balance: income - expense,
       isProjection: false,
-      transactionCount: allTx.length,
+      hasPending: pendingEntries.length > 0,
+      transactionCount: combined.length,
+      transactions: combined,
       expenseByCategory: toRanked(expenseMap, expense),
       incomeByCategory: toRanked(incomeMap, income),
     };
