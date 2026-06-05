@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { Plus, Trash2, Repeat, Pause, Play, CalendarClock, CreditCard } from 'lucide-react';
+import { Plus, Trash2, Repeat, Pause, Play, CalendarClock, CreditCard, Pencil } from 'lucide-react';
 
 function fmt(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -14,74 +14,122 @@ const freqLabels: Record<string, string> = {
   YEARLY: 'Anual',
 };
 
+const emptyForm = () => ({
+  description: '',
+  amount: '',
+  type: 'EXPENSE',
+  frequency: 'MONTHLY',
+  nextDueDate: new Date().toISOString().slice(0, 10),
+  isFifthBusinessDay: false,
+  creditCardId: '',
+  accountId: '',
+});
+
 export function RecurringPage() {
   const qc = useQueryClient();
   const { data: rules, isLoading } = useQuery({ queryKey: ['recurring'], queryFn: api.recurring.list });
   const { data: cards } = useQuery({ queryKey: ['credit-cards'], queryFn: api.creditCards.list });
   const { data: accounts } = useQuery({ queryKey: ['accounts'], queryFn: api.accounts.list });
+
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10), isFifthBusinessDay: false, creditCardId: '', accountId: '' });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState(emptyForm());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const createMut = useMutation({
     mutationFn: api.recurring.create,
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['recurring'] });
-      setShowForm(false);
-      resetForm();
-    },
-    onError: (err: any) => {
-      alert(`Erro ao criar regra recorrente: ${err.message}`);
-    }
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['recurring'] }); closeForm(); },
+    onError: (err: any) => alert(`Erro ao criar regra: ${err.message}`),
   });
-  const updateMut = useMutation({
+
+  const editMut = useMutation({
+    mutationFn: ({ id, ...d }: any) => api.recurring.update(id, d),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['recurring'] }); closeForm(); },
+    onError: (err: any) => alert(`Erro ao salvar alterações: ${err.message}`),
+  });
+
+  const toggleMut = useMutation({
     mutationFn: ({ id, ...d }: any) => api.recurring.update(id, d),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['recurring'] }),
-    onError: (err: any) => {
-      alert(`Erro ao atualizar regra recorrente: ${err.message}`);
-    }
+    onError: (err: any) => alert(`Erro ao atualizar regra: ${err.message}`),
   });
+
   const deleteMut = useMutation({
     mutationFn: api.recurring.delete,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['recurring'] }),
-    onError: (err: any) => {
-      alert(`Erro ao excluir regra recorrente: ${err.message}`);
-    }
+    onError: (err: any) => alert(`Erro ao excluir regra: ${err.message}`),
   });
 
-  function resetForm() { setForm({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10), isFifthBusinessDay: false, creditCardId: '', accountId: '' }); }
+  function closeForm() {
+    setShowForm(false);
+    setEditingId(null);
+    setForm(emptyForm());
+  }
+
+  function openCreate() {
+    setEditingId(null);
+    setForm(emptyForm());
+    setShowForm(true);
+  }
+
+  function openEdit(r: any) {
+    setEditingId(r.id);
+    setForm({
+      description: r.description ?? '',
+      amount: String(r.amount ?? ''),
+      type: r.type ?? 'EXPENSE',
+      frequency: r.frequency ?? 'MONTHLY',
+      nextDueDate: r.nextDueDate
+        ? new Date(r.nextDueDate).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10),
+      isFifthBusinessDay: !!r.isFifthBusinessDay,
+      creditCardId: r.creditCardId ?? '',
+      accountId: r.accountId ?? '',
+    });
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const useCard = form.type === 'EXPENSE' && !!form.creditCardId;
-    createMut.mutate({
+    const payload = {
       description: form.description,
       amount: Number(form.amount),
       type: form.type as 'INCOME' | 'EXPENSE',
       frequency: form.frequency as any,
       nextDueDate: form.nextDueDate,
       isFifthBusinessDay: form.frequency === 'MONTHLY' ? form.isFifthBusinessDay : false,
-      ...(useCard ? { creditCardId: form.creditCardId } : {}),
+      ...(useCard ? { creditCardId: form.creditCardId, accountId: null } : { creditCardId: null }),
       ...(!useCard && form.accountId ? { accountId: form.accountId } : {}),
-    });
+    };
+
+    if (editingId) {
+      editMut.mutate({ id: editingId, ...payload });
+    } else {
+      createMut.mutate(payload);
+    }
   }
 
   const cardName = (id?: string | null) => cards?.find((c: any) => c.id === id)?.name;
   const accountName = (id?: string | null) => accounts?.find((a: any) => a.id === id)?.name;
-
   const inputCls = 'w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none';
+  const isPending = createMut.isPending || editMut.isPending;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <h1 className="text-2xl font-bold">Recorrentes</h1>
-        <button onClick={() => { resetForm(); setShowForm(!showForm); }} className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500 font-medium">
+        <button onClick={openCreate} className="flex w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500">
           <Plus className="h-4 w-4" /> Nova regra
         </button>
       </div>
 
       {showForm && (
         <form onSubmit={handleSubmit} className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5 space-y-4">
+          <p className="text-sm font-semibold text-slate-300">
+            {editingId ? 'Editar regra recorrente' : 'Nova regra recorrente'}
+          </p>
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <label className="mb-1 block text-xs text-slate-400">Descrição</label>
@@ -108,6 +156,7 @@ export function RecurringPage() {
               </select>
             </div>
           </div>
+
           <div>
             <label className="mb-1 block text-xs text-slate-400">
               {form.type === 'INCOME' ? 'Entra em qual conta' : 'Lançar em'}
@@ -133,16 +182,17 @@ export function RecurringPage() {
             {form.accountId && (
               <p className="mt-1 text-[11px] text-slate-500">
                 {form.type === 'INCOME'
-                  ? 'Todo período credita o saldo dessa conta (ex.: o vale entra na conta "Vale").'
+                  ? 'Todo período credita o saldo dessa conta.'
                   : 'Todo período sai do saldo dessa conta.'}
               </p>
             )}
             {form.creditCardId && (
               <p className="mt-1 text-[11px] text-slate-500">
-                Lançado nesse cartão a cada período. O limite só é usado quando o lançamento é criado, não antes.
+                Lançado nesse cartão a cada período. O limite só é usado quando o lançamento é criado.
               </p>
             )}
           </div>
+
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
             {!form.isFifthBusinessDay && (
               <div>
@@ -168,16 +218,19 @@ export function RecurringPage() {
                   className="rounded border-slate-700 bg-slate-800 text-emerald-500 focus:ring-emerald-500 h-4 w-4 cursor-pointer"
                 />
                 <label htmlFor="isFifthBusinessDay" className="text-sm font-medium text-slate-300 cursor-pointer select-none">
-                  Smart: Receber / Pagar no 5º dia útil do mês (salários, etc.)
+                  Smart: 5º dia útil do mês
                 </label>
               </div>
             )}
           </div>
+
           <div className="flex gap-2">
-            <button type="submit" disabled={createMut.isPending} className="flex-1 sm:flex-none rounded-lg bg-emerald-600 px-6 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50 text-center">
-              {createMut.isPending ? 'Salvando...' : 'Salvar'}
+            <button type="submit" disabled={isPending} className="flex-1 sm:flex-none rounded-lg bg-emerald-600 px-6 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50 text-center">
+              {isPending ? 'Salvando...' : editingId ? 'Atualizar' : 'Salvar'}
             </button>
-            <button type="button" onClick={() => setShowForm(false)} className="flex-1 sm:flex-none rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800 text-center font-medium">Cancelar</button>
+            <button type="button" onClick={closeForm} className="flex-1 sm:flex-none rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-300 hover:bg-slate-800 text-center font-medium">
+              Cancelar
+            </button>
           </div>
         </form>
       )}
@@ -232,10 +285,7 @@ export function RecurringPage() {
                   <div className="flex items-center gap-1.5 animate-fadeIn">
                     <span className="text-[11px] text-rose-400 font-medium">Excluir?</span>
                     <button
-                      onClick={() => {
-                        deleteMut.mutate(r.id);
-                        setConfirmDeleteId(null);
-                      }}
+                      onClick={() => { deleteMut.mutate(r.id); setConfirmDeleteId(null); }}
                       className="rounded bg-rose-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-rose-500"
                     >
                       Sim
@@ -250,9 +300,16 @@ export function RecurringPage() {
                 ) : (
                   <div className="flex gap-1">
                     <button
-                      onClick={() => updateMut.mutate({ id: r.id, active: !r.active })}
+                      onClick={() => openEdit(r)}
                       className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-                      title={r.active ? 'Pausar/Ativar' : 'Ativar/Pausar'}
+                      title="Editar"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => toggleMut.mutate({ id: r.id, active: !r.active })}
+                      className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+                      title={r.active ? 'Pausar' : 'Ativar'}
                     >
                       {r.active ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                     </button>
