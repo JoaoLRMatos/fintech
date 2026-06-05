@@ -93,16 +93,19 @@ export function RecurringPage() {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const useCard = form.type === 'EXPENSE' && !!form.creditCardId;
-    const payload = {
+    const payload: Record<string, any> = {
       description: form.description,
       amount: Number(form.amount),
       type: form.type as 'INCOME' | 'EXPENSE',
       frequency: form.frequency as any,
       nextDueDate: form.nextDueDate,
       isFifthBusinessDay: form.frequency === 'MONTHLY' ? form.isFifthBusinessDay : false,
-      ...(useCard ? { creditCardId: form.creditCardId, accountId: null } : { creditCardId: null }),
-      ...(!useCard && form.accountId ? { accountId: form.accountId } : {}),
     };
+    if (useCard) {
+      payload.creditCardId = form.creditCardId;
+    } else {
+      if (form.accountId) payload.accountId = form.accountId;
+    }
 
     if (editingId) {
       editMut.mutate({ id: editingId, ...payload });

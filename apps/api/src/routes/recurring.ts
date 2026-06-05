@@ -30,9 +30,9 @@ export async function recurringRoutes(app: FastifyInstance) {
       isFifthBusinessDay: z.boolean().optional(),
       nextDueDate: z.string().transform(v => new Date(v)),
       endDate: z.string().transform(v => new Date(v)).optional(),
-      categoryId: z.string().optional(),
-      accountId: z.string().optional(),
-      creditCardId: z.string().optional(),
+      categoryId: z.string().nullable().optional(),
+      accountId: z.string().nullable().optional(),
+      creditCardId: z.string().nullable().optional(),
     }).parse(request.body);
 
     // Lançamento no cartão de crédito não usa conta (sai na fatura).
