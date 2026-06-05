@@ -31,7 +31,8 @@ export function ProjectionPage() {
 
   const chartData = projection.map((m: any) => ({
     month: m.label.split(' ')[0],
-    Saldo: Math.round(m.closingBalance),
+    'Saldo acumulado': Math.round(m.closingBalance),
+    'Sobra do mês': Math.round(m.saldoMes),
     Entradas: Math.round(m.income),
     Saídas: Math.round(m.expense),
   }));
@@ -109,8 +110,8 @@ export function ProjectionPage() {
                   <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="3 3" />
                   <Bar dataKey="Entradas" fill="#22c55e" radius={[4, 4, 0, 0]} barSize={10} />
                   <Bar dataKey="Saídas" fill="#ef4444" radius={[4, 4, 0, 0]} barSize={10} />
-                  <Area type="monotone" dataKey="Saldo" stroke="#34d399" strokeWidth={2} fill="url(#saldoFill)" />
-                  <Line type="monotone" dataKey="Saldo" stroke="#34d399" strokeWidth={0} dot={{ r: 3, fill: '#34d399' }} />
+                  <Area type="monotone" dataKey="Saldo acumulado" stroke="#34d399" strokeWidth={2} fill="url(#saldoFill)" dot={{ r: 3, fill: '#34d399' }} />
+                  <Line type="monotone" dataKey="Sobra do mês" stroke="#38bdf8" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 3, fill: '#38bdf8' }} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -119,16 +120,30 @@ export function ProjectionPage() {
           {/* Tabela mês a mês */}
           {projection.length > 0 && (
             <div className="rounded-2xl border border-slate-800 bg-slate-900 overflow-hidden">
-              <div className="px-4 sm:px-5 py-4 border-b border-slate-800"><h2 className="font-semibold">Mês a mês</h2></div>
+              <div className="px-4 sm:px-5 py-4 border-b border-slate-800">
+                <h2 className="font-semibold">Mês a mês</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  <span className="text-sky-400">Sobra</span> = o que sobra só naquele mês · <span className="text-emerald-400">Acumulado</span> = saldo somando os meses anteriores
+                </p>
+              </div>
               {projection.map((m: any) => (
                 <div key={m.key} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 sm:px-5 py-3 sm:py-3.5 border-b border-slate-800 last:border-0 hover:bg-slate-800/10">
                   <span className="text-sm font-semibold capitalize text-slate-100">{m.label}</span>
                   <div className="flex flex-wrap sm:flex-nowrap items-center gap-x-4 gap-y-2 sm:gap-5 text-sm">
                     <span className="flex items-center gap-1 text-xs sm:text-sm text-emerald-400 font-medium"><TrendingUp className="h-3.5 w-3.5 shrink-0" />{fmt(m.income)}</span>
                     <span className="flex items-center gap-1 text-xs sm:text-sm text-rose-400 font-medium"><TrendingDown className="h-3.5 w-3.5 shrink-0" />{fmt(m.expense)}</span>
-                    <span className="text-xs text-slate-500 sm:w-28 sm:text-right font-medium">{Math.round(m.committedRatio * 100)}% comprometido</span>
-                    <span className={`text-sm font-bold sm:w-28 sm:text-right ${m.closingBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {fmt(m.closingBalance)}
+                    <span className="text-xs text-slate-500 hidden sm:inline sm:w-28 sm:text-right font-medium">{Math.round(m.committedRatio * 100)}% comprometido</span>
+                    <span className="flex flex-col sm:w-24 sm:text-right">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Sobra</span>
+                      <span className={`text-xs sm:text-sm font-semibold ${m.saldoMes >= 0 ? 'text-sky-400' : 'text-rose-400'}`}>
+                        {m.saldoMes >= 0 ? '+' : ''}{fmt(m.saldoMes)}
+                      </span>
+                    </span>
+                    <span className="flex flex-col sm:w-28 sm:text-right">
+                      <span className="text-[10px] uppercase tracking-wide text-slate-500">Acumulado</span>
+                      <span className={`text-sm font-bold ${m.closingBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {fmt(m.closingBalance)}
+                      </span>
                     </span>
                   </div>
                 </div>

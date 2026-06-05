@@ -30,12 +30,13 @@ export function ReportsPage() {
     if (detailMonth === 1) { setDetailMonth(12); setDetailYear(y => y - 1); }
     else setDetailMonth(m => m - 1);
   };
+  const detailOffset = (detailYear - currentYear) * 12 + (detailMonth - currentMonth);
   const goNextMonth = () => {
-    if (detailYear === currentYear && detailMonth === currentMonth) return; // não passar do mês atual
+    if (detailOffset >= 12) return; // permite até 12 meses de projeção à frente
     if (detailMonth === 12) { setDetailMonth(1); setDetailYear(y => y + 1); }
     else setDetailMonth(m => m + 1);
   };
-  const isCurrentMonth = detailYear === currentYear && detailMonth === currentMonth;
+  const isMaxFuture = detailOffset >= 12;
 
   const { data: months = [], isLoading } = useQuery({
     queryKey: ['reports-monthly', pastMonths, futureMonths],
@@ -85,12 +86,15 @@ export function ReportsPage() {
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
-            <span className="text-base sm:text-lg font-semibold capitalize text-slate-100">
+            <span className="flex items-center gap-2 text-base sm:text-lg font-semibold capitalize text-slate-100">
               {monthDetail?.label ?? new Date(detailYear, detailMonth - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+              {monthDetail?.isProjection && (
+                <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] uppercase font-bold tracking-wide text-amber-400">projeção</span>
+              )}
             </span>
             <button
               onClick={goNextMonth}
-              disabled={isCurrentMonth}
+              disabled={isMaxFuture}
               className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
               aria-label="Próximo mês"
             >
@@ -245,7 +249,10 @@ function MonthDetailView({ data }: { data: any }) {
   const summaryCards = [
     { label: 'Receitas', value: data.income, color: 'text-emerald-400', icon: TrendingUp },
     { label: 'Despesas', value: data.expense, color: 'text-rose-400', icon: TrendingDown },
-    { label: 'Saldo do mês', value: data.balance, color: data.balance >= 0 ? 'text-emerald-400' : 'text-rose-400', icon: Wallet },
+    { label: data.isProjection ? 'Sobra do mês' : 'Saldo do mês', value: data.balance, color: data.balance >= 0 ? 'text-emerald-400' : 'text-rose-400', icon: Wallet },
+    ...(data.isProjection && data.closingBalance !== undefined
+      ? [{ label: 'Saldo acumulado previsto', value: data.closingBalance, color: data.closingBalance >= 0 ? 'text-emerald-400' : 'text-rose-400', icon: TrendingUp }]
+      : []),
   ];
 
   const expenses = data.expenseByCategory ?? [];
@@ -253,8 +260,13 @@ function MonthDetailView({ data }: { data: any }) {
 
   return (
     <div className="space-y-6">
+      {data.isProjection && (
+        <p className="rounded-xl border border-amber-800/40 bg-amber-500/5 px-4 py-2.5 text-xs text-amber-300/90">
+          Mês futuro — valores estimados a partir das recorrências, parcelas, eventos planejados e orçamento. "Sobra do mês" é o que entra menos o que sai só neste mês; "acumulado" carrega o saldo dos meses anteriores.
+        </p>
+      )}
       {/* Totais */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 gap-4 ${summaryCards.length === 4 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3'}`}>
         {summaryCards.map(({ label, value, color, icon: Icon }) => (
           <div key={label} className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
             <div className="mb-2 flex items-center justify-between">
@@ -262,7 +274,7 @@ function MonthDetailView({ data }: { data: any }) {
               <Icon className={`h-4 w-4 ${color}`} />
             </div>
             <strong className={`text-lg sm:text-xl font-bold ${color}`}>
-              {value > 0 && label === 'Saldo do mês' ? '+' : ''}{fmt(value)}
+              {value > 0 && (label.includes('Sobra') || label.includes('Saldo')) ? '+' : ''}{fmt(value)}
             </strong>
           </div>
         ))}

@@ -18,8 +18,9 @@ export function RecurringPage() {
   const qc = useQueryClient();
   const { data: rules, isLoading } = useQuery({ queryKey: ['recurring'], queryFn: api.recurring.list });
   const { data: cards } = useQuery({ queryKey: ['credit-cards'], queryFn: api.creditCards.list });
+  const { data: accounts } = useQuery({ queryKey: ['accounts'], queryFn: api.accounts.list });
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10), isFifthBusinessDay: false, creditCardId: '' });
+  const [form, setForm] = useState({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10), isFifthBusinessDay: false, creditCardId: '', accountId: '' });
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const createMut = useMutation({
@@ -48,10 +49,11 @@ export function RecurringPage() {
     }
   });
 
-  function resetForm() { setForm({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10), isFifthBusinessDay: false, creditCardId: '' }); }
+  function resetForm() { setForm({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10), isFifthBusinessDay: false, creditCardId: '', accountId: '' }); }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const useCard = form.type === 'EXPENSE' && !!form.creditCardId;
     createMut.mutate({
       description: form.description,
       amount: Number(form.amount),
@@ -59,11 +61,13 @@ export function RecurringPage() {
       frequency: form.frequency as any,
       nextDueDate: form.nextDueDate,
       isFifthBusinessDay: form.frequency === 'MONTHLY' ? form.isFifthBusinessDay : false,
-      ...(form.type === 'EXPENSE' && form.creditCardId ? { creditCardId: form.creditCardId } : {}),
+      ...(useCard ? { creditCardId: form.creditCardId } : {}),
+      ...(!useCard && form.accountId ? { accountId: form.accountId } : {}),
     });
   }
 
   const cardName = (id?: string | null) => cards?.find((c: any) => c.id === id)?.name;
+  const accountName = (id?: string | null) => accounts?.find((a: any) => a.id === id)?.name;
 
   const inputCls = 'w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none';
 
@@ -89,7 +93,7 @@ export function RecurringPage() {
             </div>
             <div>
               <label className="mb-1 block text-xs text-slate-400">Tipo</label>
-              <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value }))} className={inputCls}>
+              <select value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value, creditCardId: e.target.value === 'INCOME' ? '' : f.creditCardId }))} className={inputCls}>
                 <option value="EXPENSE">Despesa</option>
                 <option value="INCOME">Receita</option>
               </select>
@@ -104,26 +108,41 @@ export function RecurringPage() {
               </select>
             </div>
           </div>
-          {form.type === 'EXPENSE' && cards && cards.length > 0 && (
-            <div>
-              <label className="mb-1 block text-xs text-slate-400">Lançar em</label>
-              <select
-                value={form.creditCardId}
-                onChange={e => setForm(f => ({ ...f, creditCardId: e.target.value }))}
-                className={inputCls}
-              >
-                <option value="">Conta / débito (sai do saldo)</option>
-                {cards.map((c: any) => (
-                  <option key={c.id} value={c.id}>💳 Cartão {c.name} (entra na fatura)</option>
-                ))}
-              </select>
-              {form.creditCardId && (
-                <p className="mt-1 text-[11px] text-slate-500">
-                  Todo período será lançado nesse cartão. O limite só é usado quando o lançamento é criado, não antes.
-                </p>
-              )}
-            </div>
-          )}
+          <div>
+            <label className="mb-1 block text-xs text-slate-400">
+              {form.type === 'INCOME' ? 'Entra em qual conta' : 'Lançar em'}
+            </label>
+            <select
+              value={form.creditCardId ? `card:${form.creditCardId}` : form.accountId ? `acc:${form.accountId}` : ''}
+              onChange={e => {
+                const v = e.target.value;
+                if (v.startsWith('card:')) setForm(f => ({ ...f, creditCardId: v.slice(5), accountId: '' }));
+                else if (v.startsWith('acc:')) setForm(f => ({ ...f, accountId: v.slice(4), creditCardId: '' }));
+                else setForm(f => ({ ...f, accountId: '', creditCardId: '' }));
+              }}
+              className={inputCls}
+            >
+              <option value="">Sem conta (só previsão, não mexe no saldo)</option>
+              {accounts?.map((a: any) => (
+                <option key={a.id} value={`acc:${a.id}`}>Conta: {a.name}</option>
+              ))}
+              {form.type === 'EXPENSE' && cards?.map((c: any) => (
+                <option key={c.id} value={`card:${c.id}`}>💳 Cartão {c.name} (entra na fatura)</option>
+              ))}
+            </select>
+            {form.accountId && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                {form.type === 'INCOME'
+                  ? 'Todo período credita o saldo dessa conta (ex.: o vale entra na conta "Vale").'
+                  : 'Todo período sai do saldo dessa conta.'}
+              </p>
+            )}
+            {form.creditCardId && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                Lançado nesse cartão a cada período. O limite só é usado quando o lançamento é criado, não antes.
+              </p>
+            )}
+          </div>
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
             {!form.isFifthBusinessDay && (
               <div>
@@ -194,6 +213,11 @@ export function RecurringPage() {
                       <span className="flex items-center gap-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-400 uppercase tracking-wide">
                         <CreditCard className="h-3 w-3" />
                         {cardName(r.creditCardId) ?? 'Cartão'}
+                      </span>
+                    )}
+                    {r.accountId && !r.creditCardId && (
+                      <span className="rounded bg-slate-700/50 px-1.5 py-0.5 text-[10px] font-semibold text-slate-300 uppercase tracking-wide">
+                        {accountName(r.accountId) ?? 'Conta'}
                       </span>
                     )}
                     {!r.active && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400 uppercase tracking-wider">Pausado</span>}

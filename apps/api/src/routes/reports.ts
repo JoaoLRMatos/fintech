@@ -125,6 +125,67 @@ export async function reportRoutes(app: FastifyInstance) {
     const end = new Date(year, month, 0, 23, 59, 59);
     const label = start.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 
+    type CatAgg = { categoryId: string; name: string; color: string; total: number; count: number };
+    const toRanked = (map: Map<string, CatAgg>, totalSum: number) =>
+      [...map.values()]
+        .sort((a, b) => b.total - a.total)
+        .map((c) => ({ ...c, percent: totalSum > 0 ? (c.total / totalSum) * 100 : 0 }));
+
+    const aggregate = (txs: Array<{ type: string; amount: any; categoryId?: string | null; category?: any }>) => {
+      const expenseMap = new Map<string, CatAgg>();
+      const incomeMap = new Map<string, CatAgg>();
+      let income = 0;
+      let expense = 0;
+      for (const tx of txs) {
+        const amount = Number(tx.amount);
+        const catId = tx.category?.id ?? tx.categoryId ?? '__none__';
+        const name = tx.category?.name ?? 'Sem categoria';
+        const color = tx.category?.color ?? '#64748b';
+        const map = tx.type === 'INCOME' ? incomeMap : expenseMap;
+        if (tx.type === 'INCOME') income += amount;
+        else expense += amount;
+        const cur = map.get(catId) ?? { categoryId: catId, name, color, total: 0, count: 0 };
+        cur.total += amount;
+        cur.count += 1;
+        map.set(catId, cur);
+      }
+      return { income, expense, expenseMap, incomeMap };
+    };
+
+    // ── Mês futuro: usa a projeção (recorrentes + parcelas + eventos + orçamento) ──
+    const now = new Date();
+    const offset = (year - now.getFullYear()) * 12 + (month - (now.getMonth() + 1));
+    if (offset > 0) {
+      // Projeta de 1..offset para acumular o saldo corretamente e pega o mês alvo.
+      const opening = await currentBalance(workspaceId);
+      const projected = await projectMonths(workspaceId, {
+        horizon: offset,
+        startOffset: 1,
+        openingBalance: opening,
+        baseDate: now,
+      });
+      const m = projected[offset - 1];
+      if (!m) {
+        return { year, month, label, income: 0, expense: 0, balance: 0, transactionCount: 0, isProjection: true, expenseByCategory: [], incomeByCategory: [] };
+      }
+      const { expenseMap, incomeMap } = aggregate(m.transactions ?? []);
+      return {
+        year,
+        month,
+        label: m.label,
+        income: m.income,
+        expense: m.expense,
+        balance: m.saldoMes,
+        openingBalance: m.openingBalance,
+        closingBalance: m.closingBalance,
+        isProjection: true,
+        transactionCount: (m.transactions ?? []).length,
+        expenseByCategory: toRanked(expenseMap, m.expense),
+        incomeByCategory: toRanked(incomeMap, m.income),
+      };
+    }
+
+    // ── Mês passado/atual: dados reais ──
     const allTx = await prisma.transaction.findMany({
       where: {
         workspaceId,
@@ -137,31 +198,7 @@ export async function reportRoutes(app: FastifyInstance) {
       include: { category: true },
     });
 
-    type CatAgg = { categoryId: string; name: string; color: string; total: number; count: number };
-    const expenseMap = new Map<string, CatAgg>();
-    const incomeMap = new Map<string, CatAgg>();
-    let income = 0;
-    let expense = 0;
-
-    for (const tx of allTx) {
-      const amount = Number(tx.amount);
-      const catId = tx.categoryId ?? '__none__';
-      const name = tx.category?.name ?? 'Sem categoria';
-      const color = tx.category?.color ?? '#64748b';
-      const map = tx.type === 'INCOME' ? incomeMap : expenseMap;
-      if (tx.type === 'INCOME') income += amount;
-      else expense += amount;
-
-      const cur = map.get(catId) ?? { categoryId: catId, name, color, total: 0, count: 0 };
-      cur.total += amount;
-      cur.count += 1;
-      map.set(catId, cur);
-    }
-
-    const toRanked = (map: Map<string, CatAgg>, totalSum: number) =>
-      [...map.values()]
-        .sort((a, b) => b.total - a.total)
-        .map((c) => ({ ...c, percent: totalSum > 0 ? (c.total / totalSum) * 100 : 0 }));
+    const { income, expense, expenseMap, incomeMap } = aggregate(allTx);
 
     return {
       year,
@@ -170,6 +207,7 @@ export async function reportRoutes(app: FastifyInstance) {
       income,
       expense,
       balance: income - expense,
+      isProjection: false,
       transactionCount: allTx.length,
       expenseByCategory: toRanked(expenseMap, expense),
       incomeByCategory: toRanked(incomeMap, income),
