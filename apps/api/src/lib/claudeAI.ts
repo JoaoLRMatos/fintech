@@ -39,6 +39,16 @@ export function resolveClaudeApiKey(): string | undefined {
   return undefined;
 }
 
+/**
+ * Modelo usado nas chamadas. Pode ser sobrescrito pela env var CLAUDE_MODEL
+ * (útil quando a Anthropic aposenta um modelo — basta trocar a variável no
+ * Render, sem mexer no código). Default: Sonnet 4.6 (bom equilíbrio
+ * raciocínio/custo para o assistente).
+ */
+function resolveClaudeModel(): string {
+  return process.env.CLAUDE_MODEL || process.env['claude-model'] || 'claude-sonnet-4-6';
+}
+
 export async function claudeChat(
   messages: ClaudeMessage[],
   system?: string,
@@ -50,7 +60,7 @@ export async function claudeChat(
     throw new Error('CLAUDE_API_KEY ou claude-api-key não configurada no ambiente');
   }
 
-  const MODEL = 'claude-3-5-sonnet-20241022';
+  const MODEL = resolveClaudeModel();
 
   const body: any = {
     model: MODEL,
@@ -111,7 +121,7 @@ export async function claudeToolCall<T = any>(
     throw new Error('CLAUDE_API_KEY ou claude-api-key não configurada no ambiente');
   }
 
-  const MODEL = 'claude-3-5-sonnet-20241022';
+  const MODEL = resolveClaudeModel();
 
   const body = {
     model: MODEL,
