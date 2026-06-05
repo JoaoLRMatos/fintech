@@ -32,7 +32,14 @@ export async function recurringRoutes(app: FastifyInstance) {
       endDate: z.string().transform(v => new Date(v)).optional(),
       categoryId: z.string().optional(),
       accountId: z.string().optional(),
+      creditCardId: z.string().optional(),
     }).parse(request.body);
+
+    // Lançamento no cartão de crédito não usa conta (sai na fatura).
+    if (body.creditCardId) {
+      body.accountId = undefined;
+      (body as any).paymentMethod = 'credit';
+    }
 
     let nextDueDate = body.nextDueDate;
     if (isFifthBusinessDay) {
@@ -72,10 +79,20 @@ export async function recurringRoutes(app: FastifyInstance) {
       active: z.boolean().optional(),
       categoryId: z.string().nullable().optional(),
       accountId: z.string().nullable().optional(),
+      creditCardId: z.string().nullable().optional(),
     }).parse(request.body);
 
     const existing = await prisma.recurringRule.findFirst({ where: { id, workspaceId } });
     if (!existing) throw new Error('Regra recorrente não encontrada.');
+
+    // Alternou para cartão de crédito → zera a conta; alternou para conta → zera o cartão.
+    if (body.creditCardId) {
+      body.accountId = null;
+      (body as any).paymentMethod = 'credit';
+    } else if (body.creditCardId === null || body.accountId) {
+      (body as any).paymentMethod = body.accountId ? 'debit' : null;
+      body.creditCardId = null;
+    }
 
     let nextDueDate = body.nextDueDate;
     const nextIsFifth = isFifthBusinessDay !== undefined ? (isFifthBusinessDay ?? false) : (existing.isFifthBusinessDay ?? false);

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { Plus, Trash2, Repeat, Pause, Play, CalendarClock } from 'lucide-react';
+import { Plus, Trash2, Repeat, Pause, Play, CalendarClock, CreditCard } from 'lucide-react';
 
 function fmt(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -17,8 +17,9 @@ const freqLabels: Record<string, string> = {
 export function RecurringPage() {
   const qc = useQueryClient();
   const { data: rules, isLoading } = useQuery({ queryKey: ['recurring'], queryFn: api.recurring.list });
+  const { data: cards } = useQuery({ queryKey: ['credit-cards'], queryFn: api.creditCards.list });
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10), isFifthBusinessDay: false });
+  const [form, setForm] = useState({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10), isFifthBusinessDay: false, creditCardId: '' });
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const createMut = useMutation({
@@ -47,7 +48,7 @@ export function RecurringPage() {
     }
   });
 
-  function resetForm() { setForm({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10), isFifthBusinessDay: false }); }
+  function resetForm() { setForm({ description: '', amount: '', type: 'EXPENSE', frequency: 'MONTHLY', nextDueDate: new Date().toISOString().slice(0, 10), isFifthBusinessDay: false, creditCardId: '' }); }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -58,8 +59,11 @@ export function RecurringPage() {
       frequency: form.frequency as any,
       nextDueDate: form.nextDueDate,
       isFifthBusinessDay: form.frequency === 'MONTHLY' ? form.isFifthBusinessDay : false,
+      ...(form.type === 'EXPENSE' && form.creditCardId ? { creditCardId: form.creditCardId } : {}),
     });
   }
+
+  const cardName = (id?: string | null) => cards?.find((c: any) => c.id === id)?.name;
 
   const inputCls = 'w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none';
 
@@ -100,6 +104,26 @@ export function RecurringPage() {
               </select>
             </div>
           </div>
+          {form.type === 'EXPENSE' && cards && cards.length > 0 && (
+            <div>
+              <label className="mb-1 block text-xs text-slate-400">Lançar em</label>
+              <select
+                value={form.creditCardId}
+                onChange={e => setForm(f => ({ ...f, creditCardId: e.target.value }))}
+                className={inputCls}
+              >
+                <option value="">Conta / débito (sai do saldo)</option>
+                {cards.map((c: any) => (
+                  <option key={c.id} value={c.id}>💳 Cartão {c.name} (entra na fatura)</option>
+                ))}
+              </select>
+              {form.creditCardId && (
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Todo período será lançado nesse cartão. O limite só é usado quando o lançamento é criado, não antes.
+                </p>
+              )}
+            </div>
+          )}
           <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
             {!form.isFifthBusinessDay && (
               <div>
@@ -166,6 +190,12 @@ export function RecurringPage() {
                       <CalendarClock className="h-3 w-3 text-slate-500" />
                       Próx: {new Date(r.nextDueDate).toLocaleDateString('pt-BR')}
                     </span>
+                    {r.creditCardId && (
+                      <span className="flex items-center gap-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-400 uppercase tracking-wide">
+                        <CreditCard className="h-3 w-3" />
+                        {cardName(r.creditCardId) ?? 'Cartão'}
+                      </span>
+                    )}
                     {!r.active && <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400 uppercase tracking-wider">Pausado</span>}
                   </div>
                 </div>

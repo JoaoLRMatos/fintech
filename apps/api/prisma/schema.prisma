@@ -156,6 +156,11 @@ model RecurringRule {
   workspaceId        String
   accountId          String?
   categoryId         String?
+  // Quando preenchido, a recorrência é lançada NO CARTÃO DE CRÉDITO (ex.: Netflix
+  // no cartão do BB). A transação só é criada quando vence — então o limite do
+  // cartão só é consumido no mês do lançamento, nunca antecipadamente.
+  creditCardId       String?
+  paymentMethod      String?         // 'credit' | 'debit' (informativo)
   workspace          Workspace       @relation(fields: [workspaceId], references: [id])
   createdAt          DateTime        @default(now())
   updatedAt          DateTime        @updatedAt

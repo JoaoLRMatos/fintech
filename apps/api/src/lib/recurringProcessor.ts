@@ -1,5 +1,6 @@
 import { prisma } from './prisma.js';
 import { getFifthBusinessDayOfMonth } from './businessDays.js';
+import { invoiceForPurchase } from './creditCard.js';
 
 export async function processRecurringRules() {
   const now = new Date();
@@ -22,22 +23,40 @@ export async function processRecurringRules() {
     });
     if (exists) continue;
 
+    // Recorrência no CARTÃO DE CRÉDITO: cria uma transação de crédito com a
+    // dueDate calculada pelo ciclo do cartão. Como criamos só quando vence (uma
+    // por mês), o limite do cartão só é consumido no mês do lançamento — nunca
+    // de forma antecipada.
+    const card = rule.creditCardId
+      ? await prisma.creditCard.findUnique({ where: { id: rule.creditCardId } })
+      : null;
+    const isCredit = !!card;
+
+    let dueDate: Date | null = null;
+    if (isCredit && card) {
+      dueDate = invoiceForPurchase(card, now).dueDate;
+    }
+
     // Cria transação
-    const tx = await prisma.transaction.create({
+    await prisma.transaction.create({
       data: {
         type: rule.type,
         amount: rule.amount,
         description: rule.description,
         occurredAt: now,
         source: sourceTag,
+        paymentMethod: isCredit ? 'credit' : (rule.paymentMethod ?? undefined),
+        dueDate,
         workspaceId: rule.workspaceId,
         categoryId: rule.categoryId,
-        accountId: rule.accountId,
+        creditCardId: isCredit ? card!.id : null,
+        // No crédito não há conta vinculada (sai na fatura, não no saldo agora).
+        accountId: isCredit ? null : rule.accountId,
       },
     });
 
-    // Atualiza saldo da conta se vinculada
-    if (rule.accountId) {
+    // Atualiza saldo da conta apenas quando NÃO é cartão de crédito.
+    if (!isCredit && rule.accountId) {
       const delta = rule.type === 'INCOME' ? Number(rule.amount) : -Number(rule.amount);
       await prisma.account.update({
         where: { id: rule.accountId },
