@@ -1,5 +1,5 @@
 import { prisma } from './prisma.js';
-import { getFifthBusinessDayOfMonth } from './businessDays.js';
+import { getFifthBusinessDayOfMonth, addMonthsClamped } from './businessDays.js';
 
 /**
  * Motor de projeção financeira.
@@ -67,17 +67,15 @@ function monthWindow(base: Date, offset: number) {
 
 function advanceRule(date: Date, frequency: string, isFifthBusinessDay?: boolean): Date {
   if (isFifthBusinessDay && frequency === 'MONTHLY') {
-    const nextMonth = new Date(date);
-    nextMonth.setMonth(nextMonth.getMonth() + 1);
+    const nextMonth = addMonthsClamped(date, 1);
     return getFifthBusinessDayOfMonth(nextMonth.getFullYear(), nextMonth.getMonth());
   }
   const d = new Date(date);
-  if (frequency === 'DAILY') d.setDate(d.getDate() + 1);
-  else if (frequency === 'WEEKLY') d.setDate(d.getDate() + 7);
-  else if (frequency === 'MONTHLY') d.setMonth(d.getMonth() + 1);
-  else if (frequency === 'YEARLY') d.setFullYear(d.getFullYear() + 1);
-  else d.setMonth(d.getMonth() + 1);
-  return d;
+  if (frequency === 'DAILY') { d.setDate(d.getDate() + 1); return d; }
+  if (frequency === 'WEEKLY') { d.setDate(d.getDate() + 7); return d; }
+  if (frequency === 'YEARLY') { d.setFullYear(d.getFullYear() + 1); return d; }
+  // MONTHLY (e default): soma 1 mês limitando ao último dia (evita pular meses curtos).
+  return addMonthsClamped(date, 1);
 }
 
 /** Quantas vezes uma regra recorrente dispara dentro de [start, end]. */

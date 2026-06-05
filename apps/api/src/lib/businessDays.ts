@@ -60,6 +60,20 @@ export function isHolidayOrWeekend(date: Date): boolean {
   return false;
 }
 
+/**
+ * Soma `n` meses a uma data preservando o dia, mas LIMITANDO ao último dia do mês
+ * de destino. Evita o overflow nativo do Date: 31/mai + 1 mês NÃO pode virar
+ * 01/jul (junho não tem dia 31) — vira 30/jun. Sem isso, regras de fim de mês
+ * (dia 30/31) pulam os meses mais curtos.
+ */
+export function addMonthsClamped(date: Date, n: number): Date {
+  const day = date.getDate();
+  const d = new Date(date.getFullYear(), date.getMonth() + n, 1, date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds());
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, lastDay));
+  return d;
+}
+
 export function getFifthBusinessDayOfMonth(year: number, month: number): Date {
   let count = 0;
   let day = 1;

@@ -1,5 +1,5 @@
 import { prisma } from './prisma.js';
-import { getFifthBusinessDayOfMonth } from './businessDays.js';
+import { getFifthBusinessDayOfMonth, addMonthsClamped } from './businessDays.js';
 import { invoiceForPurchase } from './creditCard.js';
 
 export async function processRecurringRules() {
@@ -80,7 +80,8 @@ export async function processRecurringRules() {
           next.setDate(next.getDate() + 7);
           break;
         case 'MONTHLY':
-          next.setMonth(next.getMonth() + 1);
+          // Limita ao último dia do mês para regras de dia 30/31 não pularem meses curtos.
+          next = addMonthsClamped(next, 1);
           break;
         case 'YEARLY':
           next.setFullYear(next.getFullYear() + 1);
