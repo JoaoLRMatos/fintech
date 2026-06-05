@@ -190,6 +190,10 @@ export async function handleIncomingMessage(
 
       if (act.action === 'create_installment') {
         if (!act.amount || !act.installments || act.installments < 2) {
+          log.error(
+            { action: act },
+            'create_installment ignorado: amount/installments inválidos (installments deve ser >= 2)',
+          );
           continue;
         }
         const installmentAmount = Math.round((act.amount / act.installments) * 100) / 100;
@@ -408,13 +412,19 @@ export async function handleIncomingMessage(
   }
 
   // 3. Update Chat History
-  const updatedHistory = [...history];
-  updatedHistory.push({ role: 'user', content: text });
-  updatedHistory.push({ role: 'assistant', content: response.reply });
-  if (updatedHistory.length > 20) {
-    updatedHistory.splice(0, updatedHistory.length - 20);
+  // Só gravamos no histórico quando a IA realmente processou a mensagem. Se a
+  // chamada falhou (response.ok === false), NADA foi salvo no banco — então não
+  // poluímos o histórico com a mensagem de erro. Assim, quando o usuário repete
+  // os mesmos dados, o agente trata como uma criação nova (e não como "já fiz").
+  if (response.ok) {
+    const updatedHistory = [...history];
+    updatedHistory.push({ role: 'user', content: text });
+    updatedHistory.push({ role: 'assistant', content: response.reply });
+    if (updatedHistory.length > 20) {
+      updatedHistory.splice(0, updatedHistory.length - 20);
+    }
+    chatHistories.set(ctxKey, updatedHistory);
   }
-  chatHistories.set(ctxKey, updatedHistory);
 
   // 4. Send Agent Reply
   await sendReply(response.reply);

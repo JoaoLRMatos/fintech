@@ -1,4 +1,4 @@
-import { claudeChat, ClaudeMessage, cleanAndParseJSON } from './claudeAI.js';
+import { claudeToolCall, ClaudeMessage, type ClaudeTool } from './claudeAI.js';
 
 export interface AgentAction {
   action: 'create_transaction' | 'create_installment' | 'update_transaction' | 'delete_transaction' | 'pay_invoice';
@@ -17,7 +17,64 @@ export interface AgentAction {
 export interface AgentResponse {
   actions: AgentAction[];
   reply: string;
+  /** false quando a chamada ao modelo falhou de fato (não houve interpretação). */
+  ok: boolean;
 }
+
+const AGENT_TOOL: ClaudeTool = {
+  name: 'executar_acoes_financeiras',
+  description:
+    'Registra a sua resposta amigável ao usuário e a lista de ações que devem ser executadas no banco de dados financeiro. SEMPRE chame esta tool.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      reply: {
+        type: 'string',
+        description:
+          'Resposta amigável e natural em português brasileiro para o usuário. Quando registrar/alterar algo, confirme com os números reais (valor, parcelas, cartão, data).',
+      },
+      actions: {
+        type: 'array',
+        description:
+          'Lista de ações a executar. Vazio ([]) quando o usuário só faz perguntas ou conversa.',
+        items: {
+          type: 'object',
+          properties: {
+            action: {
+              type: 'string',
+              enum: [
+                'create_transaction',
+                'create_installment',
+                'update_transaction',
+                'delete_transaction',
+                'pay_invoice',
+              ],
+            },
+            type: { type: 'string', enum: ['INCOME', 'EXPENSE'] },
+            amount: {
+              type: 'number',
+              description:
+                'Em create_installment é o VALOR TOTAL da compra (não o valor da parcela).',
+            },
+            description: { type: 'string' },
+            occurredAt: { type: 'string', description: 'Data no formato YYYY-MM-DD' },
+            paymentMethod: { type: 'string', enum: ['credit', 'debit'] },
+            creditCardId: { type: 'string' },
+            categoryId: { type: 'string' },
+            transactionId: { type: 'string' },
+            installments: {
+              type: 'integer',
+              description: 'Número de parcelas (>= 2). Obrigatório em create_installment.',
+            },
+            paidAt: { type: 'string', description: 'Data no formato YYYY-MM-DD' },
+          },
+          required: ['action'],
+        },
+      },
+    },
+    required: ['reply', 'actions'],
+  },
+};
 
 export async function processAgentMessage(
   text: string,
@@ -69,39 +126,33 @@ ${monthSummary}
 Últimos 15 Lançamentos Registrados na Conta (Mais Recentes Primeiro):
 ${recentTransactionsList || '- Nenhum lançamento registrado'}
 
-DIRETRIZES DA IA PARA ROBUSTEZ:
+REGRAS (siga à risca):
 
-1. ASSISTENTE INTELIGENTE vs CADASTROS:
-   - Se o usuário fizer uma pergunta, tirar dúvidas sobre o seu saldo, faturas de cartão, resumo ou projeções (por exemplo: "como está o banco do brasil, fatura quem vence agora em junho?"), você deve analisar o "ESTADO ATUAL DO BANCO DE DATOS" (por exemplo, faturas de cartão, lançamentos, contas) e responder de forma direta, clara e humana na propriedade "reply", mantendo o array "actions" vazio: [].
-   - Nunca crie transações duplicadas se o usuário estiver apenas tirando dúvidas ou se o histórico de conversas mostrar que o lançamento já foi processado ou se a última resposta deu erro e o usuário está apenas repetindo os dados para confirmar a inserção. Se for uma repetição após uma falha de conexão anterior, emita a ação necessária com precisão.
+1. CRIAR vs ATUALIZAR — a regra mais importante:
+   - O DEFAULT é SEMPRE CRIAR um novo lançamento (create_transaction ou create_installment).
+   - Só use "update_transaction" / "delete_transaction" quando o usuário pedir EXPLICITAMENTE para mudar/corrigir/apagar algo ("muda", "corrige", "troca", "apaga", "estava errado") E você conseguir achar o lançamento exato na lista "Últimos 15 Lançamentos" pelo ID.
+   - NUNCA atualize um lançamento que não esteja listado nos "Últimos 15 Lançamentos". Se não existe na lista, ele NÃO foi salvo — então CRIE.
+   - ATENÇÃO ÀS REPETIÇÕES APÓS ERRO: se no histórico a sua resposta anterior foi uma mensagem de erro ("tive um probleminha", "tente novamente"), então NADA foi salvo no banco. Se o usuário repetir os mesmos dados, isso é uma NOVA CRIAÇÃO — use create_transaction/create_installment. NÃO use update.
+   - Antes de dizer que "atualizou", confira se realmente existe o ID na lista. Na dúvida, crie. É proibido afirmar que salvou/atualizou algo que você não emitiu como ação.
 
-2. COMBATE ÀS FORMALIDADES DE COMANDO:
-   - Responda como um parceiro de finanças real, empático e de forma relaxada em português brasileiro. Use emojis de forma natural e moderada.
+2. PARCELAMENTO (crédito em Nx) — atenção total:
+   - Se o usuário mencionar parcelas de QUALQUER forma ("4x", "em 4 vezes", "parcelei em 4", "dividido em 4"), você é OBRIGADO a usar "create_installment" com "installments" = número de parcelas (>= 2).
+   - Em create_installment, "amount" é o VALOR TOTAL da compra. O sistema divide pelas parcelas automaticamente. (Ex: "241,53 em 4x" → amount: 241.53, installments: 4.)
+   - É PROIBIDO registrar uma compra parcelada como create_transaction (valor inteiro sem parcelas).
+   - Para alterar um parcelamento existente: pegue o ID de qualquer parcela do grupo na lista e use update_transaction com o novo valor TOTAL e/ou nova data; o backend recalcula o grupo inteiro.
 
-3. DECISÃO DE AÇÕES SEQUENCIAIS ("actions"):
-   - Você pode indicar uma ou mais ações no array "actions" para realizar modificações de dados baseadas nas intenções reais do usuário.
-   - Ações Suportadas:
-     * {"action": "create_transaction", "type": "INCOME"|"EXPENSE", "amount": number, "description": string, "occurredAt": "YYYY-MM-DD", "paymentMethod": "credit"|"debit", "creditCardId": "ID_DO_CARTÃO_SE_CREDITO", "categoryId": "ID_DA_CATEGORIA"}
-     * {"action": "create_installment", "amount": VALOR_TOTAL_DA_COMPRA, "installments": number, "description": string, "occurredAt": "YYYY-MM-DD", "paymentMethod": "credit"|"debit", "creditCardId": string, "categoryId": string}
-     * {"action": "update_transaction", "transactionId": "ID_DO_LANCAMENTO", "amount": number, "description": string, "occurredAt": "YYYY-MM-DD", "categoryId": string, "paymentMethod": "credit"|"debit", "creditCardId": string}
-     * {"action": "delete_transaction", "transactionId": "ID_DO_LANCAMENTO"}
-     * {"action": "pay_invoice", "creditCardId": "ID_DO_CARTÃO", "paidAt": "YYYY-MM-DD"}
+3. PERGUNTAS / CONVERSA:
+   - Se o usuário só pergunta, tira dúvida sobre saldo/fatura/resumo ou conversa (ex: "como está o banco do brasil?"), responda usando o ESTADO ATUAL DO BANCO DE DADOS e deixe "actions" como [] (vazio). Nunca crie nada nesse caso.
 
-4. TRATAMENTO DE CORREÇÕES, EXCLUSÕES E REPETIÇÕES:
-   - Se o usuário pedir para alterar ou excluir um valor, analise os "Últimos 15 Lançamentos" e o histórico para encontrar o ID da transação correspondente. Use "update_transaction" ou "delete_transaction".
-   - Se ele disser para alterar um parcelamento (grupo de parcelas), pegue o ID de qualquer uma destas parcelas recentes, e envie "update_transaction" com o ID correspondente e o novo valor total ou nova data. O backend recalculará o grupo inteiro automaticamente.
-   - Ao calcular datas ("dia 16/05", "ontem", "semana passada"), use a data de hoje (${todayISO}) como base para obter o ano correto. "16/05" vira "2026-05-16".
+4. CARTÕES E DATAS:
+   - Ao citar um cartão ("Banco do Brasil", "BB", "Itaú", "roxinho", "Nubank"), ache o ID correspondente nas listas. Para compra no crédito/cartão, paymentMethod = "credit" e informe o creditCardId.
+   - Datas: use hoje (${todayISO}) como base. "16/05" → "2026-05-16"; "ontem", "semana passada" → calcule a partir de hoje.
 
-5. CARTÕES DE CRÉDITO E CONTAS:
-   - Ao citar um cartão (ex: "Banco do Brasil", "BB", "Itaú", "roxinho", "Nubank"), encontre o ID perfeito nas listas cadastradas. Por exemplo, se ele mencionar "banco do brasil", procure o cartão com nome que contém "banco do brasil" ou "bb".
-   - Sempre que a compra for no crédito ou em cartões, "paymentMethod" deve ser "credit" e especifique o "creditCardId".
+5. TOM:
+   - Fale como um parceiro de finanças real, empático e relaxado em pt-BR. Emojis com moderação.
+   - Na confirmação de um lançamento, repita os números reais (valor, parcelas, cartão, data) para o usuário ter certeza do que foi salvo.
 
-RETORNE EXCLUSIVAMENTE UM OBJETO JSON COMPATÍVEL COM ESTE SCHEMA (sem markdown de bloco code, sem texto antes ou depois):
-
-{
-  "actions": [ ... ],
-  "reply": "Sua resposta amigável e natural aqui."
-}`;
+Você DEVE responder chamando a tool "executar_acoes_financeiras" com "reply" (sua resposta) e "actions" (lista, ou [] se for só conversa).`;
 
   const messages: ClaudeMessage[] = [];
 
@@ -114,18 +165,25 @@ RETORNE EXCLUSIVAMENTE UM OBJETO JSON COMPATÍVEL COM ESTE SCHEMA (sem markdown 
   messages.push({ role: 'user', content: text });
 
   try {
-    const rawResponse = await claudeChat(messages, systemMessage, 0.1, 1536);
-    const parsed = cleanAndParseJSON(rawResponse) as AgentResponse;
+    const parsed = await claudeToolCall<{ actions?: AgentAction[]; reply?: string }>(
+      messages,
+      systemMessage,
+      AGENT_TOOL,
+      0,
+      1536,
+    );
 
-    if (!parsed.actions) parsed.actions = [];
-    if (!parsed.reply) parsed.reply = 'Ok, processei seu pedido.';
-
-    return parsed;
+    return {
+      actions: Array.isArray(parsed.actions) ? parsed.actions : [],
+      reply: parsed.reply || 'Ok, processei seu pedido.',
+      ok: true,
+    };
   } catch (err) {
     console.error('[processAgentMessage] Erro na chamada do Agent:', err);
     return {
       actions: [],
       reply: 'Desculpe, tive um probleminha para processar essa mensagem agora. Pode tentar novamente?',
+      ok: false,
     };
   }
 }
