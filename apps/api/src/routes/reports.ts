@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { projectMonths, currentBalance, pendingRecurringForMonth } from '../lib/projectionEngine.js';
 import { processRecurringRules } from '../lib/recurringProcessor.js';
+import { transactionsForMonth } from '../lib/monthTransactions.js';
 
 export async function reportRoutes(app: FastifyInstance) {
   app.addHook('preHandler', app.authenticate);
@@ -47,23 +48,9 @@ export async function reportRoutes(app: FastifyInstance) {
       const label = start.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
       const key = `${year}-${String(month).padStart(2, '0')}`;
 
-      // Busca todas as transações, depois filtra pelo campo correto:
-      // - cartão de crédito pendente: usa dueDate (quando vai sair do bolso)
-      // - demais: usa occurredAt
-      const allTx = await prisma.transaction.findMany({
-        where: {
-          workspaceId,
-          OR: [
-            // débito / manual: data do lançamento dentro do mês
-            { paymentMethod: { not: 'credit' }, occurredAt: { gte: start, lte: end } },
-            { paymentMethod: null, occurredAt: { gte: start, lte: end } },
-            // crédito: vencimento da fatura dentro do mês
-            { paymentMethod: 'credit', dueDate: { gte: start, lte: end } },
-          ],
-        },
-        include: { category: true, account: true, creditCard: true },
-        orderBy: { occurredAt: 'desc' },
-      });
+      // Crédito conta pela dueDate; o resto (inclusive sem meio de pagamento)
+      // pela occurredAt. Helper trata o caso de paymentMethod ausente.
+      const allTx = await transactionsForMonth(workspaceId, start, end, { category: true, account: true, creditCard: true });
 
       let income = 0;
       let expense = 0;
@@ -211,17 +198,7 @@ export async function reportRoutes(app: FastifyInstance) {
     }
 
     // ── Mês passado/atual: dados reais ──
-    const allTx = await prisma.transaction.findMany({
-      where: {
-        workspaceId,
-        OR: [
-          { paymentMethod: { not: 'credit' }, occurredAt: { gte: start, lte: end } },
-          { paymentMethod: null, occurredAt: { gte: start, lte: end } },
-          { paymentMethod: 'credit', dueDate: { gte: start, lte: end } },
-        ],
-      },
-      include: { category: true },
-    });
+    const allTx = await transactionsForMonth(workspaceId, start, end, { category: true });
 
     const realTxs = allTx.map((t) => ({
       id: t.id,
@@ -276,18 +253,8 @@ export async function reportRoutes(app: FastifyInstance) {
       const end = new Date(year, m + 1, 0, 23, 59, 59);
       const label = start.toLocaleDateString('pt-BR', { month: 'short' });
 
-      // Mesmo critério: crédito usa dueDate, demais usam occurredAt
-      const allTx = await prisma.transaction.findMany({
-        where: {
-          workspaceId,
-          OR: [
-            { paymentMethod: { not: 'credit' }, occurredAt: { gte: start, lte: end } },
-            { paymentMethod: null, occurredAt: { gte: start, lte: end } },
-            { paymentMethod: 'credit', dueDate: { gte: start, lte: end } },
-          ],
-        },
-        select: { amount: true, type: true },
-      });
+      // Mesmo critério: crédito usa dueDate, demais usam occurredAt (helper trata ausente)
+      const allTx = await transactionsForMonth(workspaceId, start, end);
 
       let income = 0;
       let expense = 0;

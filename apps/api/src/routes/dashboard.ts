@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { pendingRecurringForMonth } from '../lib/projectionEngine.js';
 import { processRecurringRules } from '../lib/recurringProcessor.js';
+import { transactionsForMonth } from '../lib/monthTransactions.js';
 
 export async function dashboardRoutes(app: FastifyInstance) {
   app.addHook('preHandler', app.authenticate);
@@ -17,28 +18,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
 
-    const [incomeAgg, allExpenses, accounts, categories] = await Promise.all([
+    const [incomeAgg, monthTx, accounts, categories] = await Promise.all([
       prisma.transaction.aggregate({
         where: { workspaceId, type: 'INCOME', occurredAt: { gte: startOfMonth, lte: endOfMonth } },
         _sum: { amount: true },
       }),
-      // Despesas: débito usa occurredAt, crédito usa dueDate
-      prisma.transaction.findMany({
-        where: {
-          workspaceId,
-          type: 'EXPENSE',
-          OR: [
-            { paymentMethod: { not: 'credit' }, occurredAt: { gte: startOfMonth, lte: endOfMonth } },
-            { paymentMethod: null, occurredAt: { gte: startOfMonth, lte: endOfMonth } },
-            { paymentMethod: 'credit', dueDate: { gte: startOfMonth, lte: endOfMonth } },
-          ],
-        },
-        select: { amount: true, categoryId: true },
-      }),
+      // Despesas: débito/sem meio usa occurredAt, crédito usa dueDate (helper trata ausente)
+      transactionsForMonth(workspaceId, startOfMonth, endOfMonth),
       prisma.account.findMany({ where: { workspaceId }, select: { balance: true } }),
       prisma.category.findMany({ where: { workspaceId } }),
     ]);
 
+    const allExpenses = monthTx.filter((t: any) => t.type === 'EXPENSE');
     const balance = accounts.reduce((sum: number, a: { balance: any }) => sum + Number(a.balance), 0);
     let incomeMonth = Number(incomeAgg._sum.amount ?? 0);
     let expenseMonth = allExpenses.reduce((s, t) => s + Number(t.amount), 0);
@@ -93,23 +84,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59);
       const label = start.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
 
-      const [incAgg, expTx] = await Promise.all([
+      const [incAgg, monthTx] = await Promise.all([
         prisma.transaction.aggregate({ where: { workspaceId, type: 'INCOME', occurredAt: { gte: start, lte: end } }, _sum: { amount: true } }),
-        prisma.transaction.findMany({
-          where: {
-            workspaceId, type: 'EXPENSE',
-            OR: [
-              { paymentMethod: { not: 'credit' }, occurredAt: { gte: start, lte: end } },
-              { paymentMethod: null, occurredAt: { gte: start, lte: end } },
-              { paymentMethod: 'credit', dueDate: { gte: start, lte: end } },
-            ],
-          },
-          select: { amount: true },
-        }),
+        transactionsForMonth(workspaceId, start, end),
       ]);
 
       let income = Number(incAgg._sum.amount ?? 0);
-      let expense = expTx.reduce((s, t) => s + Number(t.amount), 0);
+      let expense = monthTx.filter((t: any) => t.type === 'EXPENSE').reduce((s, t) => s + Number(t.amount), 0);
 
       // Mês atual: inclui as recorrentes que ainda vão cair.
       if (i === 0) {
