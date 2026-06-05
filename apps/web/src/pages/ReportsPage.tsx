@@ -1,21 +1,41 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, Legend } from 'recharts';
-import { TrendingUp, TrendingDown, Calendar, ChevronDown, ChevronUp } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, Legend, PieChart, Pie, Cell } from 'recharts';
+import { TrendingUp, TrendingDown, Calendar, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Wallet } from 'lucide-react';
 
 function fmt(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
 const currentYear = new Date().getFullYear();
+const currentMonth = new Date().getMonth() + 1; // 1-indexed
 
 export function ReportsPage() {
   const [pastMonths, setPastMonths] = useState(6);
   const [futureMonths, setFutureMonths] = useState(3);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
-  const [yearTab, setYearTab] = useState<'monthly' | 'year'>('monthly');
+  const [yearTab, setYearTab] = useState<'detail' | 'monthly' | 'year'>('detail');
   const [selectedYear, setSelectedYear] = useState(currentYear);
+  const [detailYear, setDetailYear] = useState(currentYear);
+  const [detailMonth, setDetailMonth] = useState(currentMonth);
+
+  const { data: monthDetail, isLoading: loadingDetail } = useQuery({
+    queryKey: ['reports-month-detail', detailYear, detailMonth],
+    queryFn: () => api.reports.monthDetail(detailYear, detailMonth),
+    enabled: yearTab === 'detail',
+  });
+
+  const goPrevMonth = () => {
+    if (detailMonth === 1) { setDetailMonth(12); setDetailYear(y => y - 1); }
+    else setDetailMonth(m => m - 1);
+  };
+  const goNextMonth = () => {
+    if (detailYear === currentYear && detailMonth === currentMonth) return; // não passar do mês atual
+    if (detailMonth === 12) { setDetailMonth(1); setDetailYear(y => y + 1); }
+    else setDetailMonth(m => m + 1);
+  };
+  const isCurrentMonth = detailYear === currentYear && detailMonth === currentMonth;
 
   const { data: months = [], isLoading } = useQuery({
     queryKey: ['reports-monthly', pastMonths, futureMonths],
@@ -43,16 +63,54 @@ export function ReportsPage() {
 
       {/* Tabs */}
       <div className="flex gap-4 border-b border-slate-800 overflow-x-auto scrollbar-none scroll-smooth">
-        {(['monthly', 'year'] as const).map(tab => (
+        {(['detail', 'monthly', 'year'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setYearTab(tab)}
             className={`pb-2 px-1 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${yearTab === tab ? 'border-emerald-400 text-emerald-400' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
           >
-            {tab === 'monthly' ? 'Histórico mensal' : 'Visão anual'}
+            {tab === 'detail' ? 'Por mês' : tab === 'monthly' ? 'Histórico mensal' : 'Visão anual'}
           </button>
         ))}
       </div>
+
+      {yearTab === 'detail' && (
+        <>
+          {/* Navegador de mês */}
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900 px-3 py-2.5">
+            <button
+              onClick={goPrevMonth}
+              className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors"
+              aria-label="Mês anterior"
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            <span className="text-base sm:text-lg font-semibold capitalize text-slate-100">
+              {monthDetail?.label ?? new Date(detailYear, detailMonth - 1, 1).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
+            </span>
+            <button
+              onClick={goNextMonth}
+              disabled={isCurrentMonth}
+              className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200 transition-colors disabled:opacity-30 disabled:hover:bg-transparent"
+              aria-label="Próximo mês"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+          </div>
+
+          {loadingDetail ? (
+            <div className="flex h-32 items-center justify-center">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
+            </div>
+          ) : monthDetail && monthDetail.transactionCount > 0 ? (
+            <MonthDetailView data={monthDetail} />
+          ) : (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center">
+              <p className="text-sm text-slate-500">Nenhum lançamento neste mês.</p>
+            </div>
+          )}
+        </>
+      )}
 
       {yearTab === 'monthly' && (
         <>
@@ -178,6 +236,104 @@ export function ReportsPage() {
             </>
           )}
         </>
+      )}
+    </div>
+  );
+}
+
+function MonthDetailView({ data }: { data: any }) {
+  const summaryCards = [
+    { label: 'Receitas', value: data.income, color: 'text-emerald-400', icon: TrendingUp },
+    { label: 'Despesas', value: data.expense, color: 'text-rose-400', icon: TrendingDown },
+    { label: 'Saldo do mês', value: data.balance, color: data.balance >= 0 ? 'text-emerald-400' : 'text-rose-400', icon: Wallet },
+  ];
+
+  const expenses = data.expenseByCategory ?? [];
+  const incomes = data.incomeByCategory ?? [];
+
+  return (
+    <div className="space-y-6">
+      {/* Totais */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {summaryCards.map(({ label, value, color, icon: Icon }) => (
+          <div key={label} className="rounded-2xl border border-slate-800 bg-slate-900 p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs text-slate-500 font-medium">{label}</span>
+              <Icon className={`h-4 w-4 ${color}`} />
+            </div>
+            <strong className={`text-lg sm:text-xl font-bold ${color}`}>
+              {value > 0 && label === 'Saldo do mês' ? '+' : ''}{fmt(value)}
+            </strong>
+          </div>
+        ))}
+      </div>
+
+      {/* Gastos por categoria */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5">
+        <h2 className="mb-4 text-base sm:text-lg font-semibold">Gastos por categoria</h2>
+        {expenses.length > 0 ? (
+          <div className="grid grid-cols-1 lg:grid-cols-[0.8fr,1.2fr] gap-6 items-center">
+            <div className="h-[220px] w-full min-w-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={expenses} dataKey="total" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={85} paddingAngle={3}>
+                    {expenses.map((c: any, i: number) => <Cell key={i} fill={c.color} />)}
+                  </Pie>
+                  <Tooltip formatter={(v: number) => fmt(v)} contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, color: '#e2e8f0' }} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="space-y-3">
+              {expenses.map((c: any) => (
+                <div key={c.categoryId}>
+                  <div className="flex items-center justify-between gap-2 mb-1 text-sm">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: c.color }} />
+                      <span className="text-slate-200 truncate">{c.name}</span>
+                      <span className="text-xs text-slate-500 shrink-0">{c.count}×</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-slate-100 font-semibold">{fmt(c.total)}</span>
+                      <span className="text-xs text-slate-500 w-10 text-right">{c.percent.toFixed(0)}%</span>
+                    </div>
+                  </div>
+                  <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${c.percent}%`, background: c.color }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">Nenhuma despesa neste mês.</p>
+        )}
+      </div>
+
+      {/* Receitas por categoria */}
+      {incomes.length > 0 && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5">
+          <h2 className="mb-4 text-base sm:text-lg font-semibold">Receitas por categoria</h2>
+          <div className="space-y-3">
+            {incomes.map((c: any) => (
+              <div key={c.categoryId}>
+                <div className="flex items-center justify-between gap-2 mb-1 text-sm">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: c.color }} />
+                    <span className="text-slate-200 truncate">{c.name}</span>
+                    <span className="text-xs text-slate-500 shrink-0">{c.count}×</span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-emerald-400 font-semibold">{fmt(c.total)}</span>
+                    <span className="text-xs text-slate-500 w-10 text-right">{c.percent.toFixed(0)}%</span>
+                  </div>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-slate-800 overflow-hidden">
+                  <div className="h-full rounded-full bg-emerald-500" style={{ width: `${c.percent}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

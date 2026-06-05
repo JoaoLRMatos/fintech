@@ -109,6 +109,74 @@ export async function reportRoutes(app: FastifyInstance) {
   });
 
   /**
+   * GET /api/reports/month-detail?year=2026&month=5
+   * Detalhe de UM mês específico: receitas, despesas, saldo e a quebra por
+   * categoria (ranking de onde foi cada gasto/ganho). Crédito conta no mês de
+   * vencimento da fatura (dueDate); o resto, no mês do lançamento (occurredAt).
+   */
+  app.get('/api/reports/month-detail', async (request) => {
+    const { workspaceId } = request.user as { workspaceId: string };
+    const { year, month } = z.object({
+      year: z.coerce.number().min(2000).max(2100),
+      month: z.coerce.number().min(1).max(12),
+    }).parse(request.query);
+
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 0, 23, 59, 59);
+    const label = start.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+    const allTx = await prisma.transaction.findMany({
+      where: {
+        workspaceId,
+        OR: [
+          { paymentMethod: { not: 'credit' }, occurredAt: { gte: start, lte: end } },
+          { paymentMethod: null, occurredAt: { gte: start, lte: end } },
+          { paymentMethod: 'credit', dueDate: { gte: start, lte: end } },
+        ],
+      },
+      include: { category: true },
+    });
+
+    type CatAgg = { categoryId: string; name: string; color: string; total: number; count: number };
+    const expenseMap = new Map<string, CatAgg>();
+    const incomeMap = new Map<string, CatAgg>();
+    let income = 0;
+    let expense = 0;
+
+    for (const tx of allTx) {
+      const amount = Number(tx.amount);
+      const catId = tx.categoryId ?? '__none__';
+      const name = tx.category?.name ?? 'Sem categoria';
+      const color = tx.category?.color ?? '#64748b';
+      const map = tx.type === 'INCOME' ? incomeMap : expenseMap;
+      if (tx.type === 'INCOME') income += amount;
+      else expense += amount;
+
+      const cur = map.get(catId) ?? { categoryId: catId, name, color, total: 0, count: 0 };
+      cur.total += amount;
+      cur.count += 1;
+      map.set(catId, cur);
+    }
+
+    const toRanked = (map: Map<string, CatAgg>, totalSum: number) =>
+      [...map.values()]
+        .sort((a, b) => b.total - a.total)
+        .map((c) => ({ ...c, percent: totalSum > 0 ? (c.total / totalSum) * 100 : 0 }));
+
+    return {
+      year,
+      month,
+      label,
+      income,
+      expense,
+      balance: income - expense,
+      transactionCount: allTx.length,
+      expenseByCategory: toRanked(expenseMap, expense),
+      incomeByCategory: toRanked(incomeMap, income),
+    };
+  });
+
+  /**
    * GET /api/reports/year-summary?year=2025
    * Totais mês a mês do ano completo
    */

@@ -86,6 +86,8 @@ export const api = {
       request<any[]>(`/api/reports/monthly?pastMonths=${pastMonths}&futureMonths=${futureMonths}`),
     yearSummary: (year?: number) =>
       request<any>(`/api/reports/year-summary${year ? `?year=${year}` : ''}`),
+    monthDetail: (year: number, month: number) =>
+      request<any>(`/api/reports/month-detail?year=${year}&month=${month}`),
   },
   projection: {
     months: (months = 6) => request<any[]>(`/api/projection?months=${months}`),
